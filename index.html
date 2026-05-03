@@ -7,6 +7,7 @@
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <!-- jsPDF for exporting drawings as PDF -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <!-- Firebase SDK (v10 compat for global window usage) -->
@@ -1791,9 +1792,36 @@ function loadImageForPdf(src){
   });
 }
 
-// QR Scanner (camera-based local search)
+// QR Scanner
 var html5QrCode=null;
 function startQRScanner(){
+  if(isMobileDevice()){
+    // Mobile: use native camera photo → jsQR decode (100% iOS compatible)
+    var input=document.createElement('input');
+    input.type='file';input.accept='image/*';input.capture='environment';
+    input.onchange=function(e){
+      var file=e.target.files[0];if(!file)return;
+      var reader=new FileReader();
+      reader.onload=function(ev){
+        var img=new Image();
+        img.onload=function(){
+          var canvas=document.createElement('canvas');
+          canvas.width=img.width;canvas.height=img.height;
+          var ctx=canvas.getContext('2d');ctx.drawImage(img,0,0);
+          var imageData=ctx.getImageData(0,0,canvas.width,canvas.height);
+          if(typeof jsQR==='undefined'){alert('jsQRライブラリが読み込まれていません');return;}
+          var code=jsQR(imageData.data,imageData.width,imageData.height);
+          if(code){handleQRResult(code.data);}
+          else{alert('QRコードを読み取れませんでした。\nQRコードが枠内に収まるように撮影し直してください。');}
+        };
+        img.src=ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    };
+    input.click();
+    return;
+  }
+  // Desktop: live camera scanner
   if(typeof Html5Qrcode==='undefined'){
     alert('QRスキャナーライブラリが読み込まれていません。\nインターネット接続を確認してください。');
     return;
