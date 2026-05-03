@@ -598,7 +598,8 @@ async function fbPullMissingImages(){
   var missingIds=[];
   DRAWINGS.forEach(function(d){
     var id=d.id;
-    if(d.scanned&&!scannedImages[id]&&!scannedPdfs[id]&&!pdfThumbnails[id]){
+    // サムネイルだけあってもPDF/画像本体がなければ取得対象にする
+    if(d.scanned&&!scannedImages[id]&&!scannedPdfs[id]){
       missingIds.push(String(id));
     }
   });
@@ -2479,7 +2480,34 @@ function toggleViewerZoom(img){
 function downloadDrawingFile(id){
   var d=DRAWINGS.find(function(x){return x.id===id});if(!d)return;
   var hasFile=scannedImages[id]||scannedBlobUrls[id]||scannedPdfs[id];
-  if(!hasFile){alert('図面ファイルがありません');return}
+  if(!hasFile){
+    // Firebaseからオンデマンド取得を試みる
+    if(fbEnabled){
+      var loadMsg=document.createElement('div');
+      loadMsg.id='_dlLoadMsg';
+      loadMsg.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;padding:20px 28px;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.25);z-index:9999;text-align:center;font-size:14px';
+      loadMsg.innerHTML='<div style="margin-bottom:8px">⏳ 図面データを取得中...</div><div style="font-size:11px;color:#666">しばらくお待ちください</div>';
+      document.body.appendChild(loadMsg);
+      fbDB.collection('workspaces').doc('default').collection('images').doc(String(id)).get().then(function(snap){
+        document.body.removeChild(loadMsg);
+        if(snap.exists){
+          var data=snap.data();
+          if(data.pdf){scannedPdfs[id]=data.pdf;dbPut('meta','scannedPdfs',scannedPdfs);}
+          if(data.image){scannedImages[id]=data.image;dbPut('images',String(id),data.image);}
+          if(data.thumb){pdfThumbnails[id]=data.thumb;dbPut('meta','pdfThumbs',pdfThumbnails);}
+          var nowHas=scannedImages[id]||scannedPdfs[id];
+          if(nowHas){downloadDrawingFile(id);}
+          else{alert('図面ファイルがありません\n（まだPCから同期されていない可能性があります）');}
+        }else{alert('図面ファイルがありません\n（まだPCから同期されていない可能性があります）');}
+      }).catch(function(e){
+        if(document.body.contains(loadMsg))document.body.removeChild(loadMsg);
+        alert('取得エラー: '+e.message);
+      });
+    }else{
+      alert('図面ファイルがありません');
+    }
+    return;
+  }
   var isMobile=/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
   // Resolve actual PDF data: scannedPdfs may be a data URL or just boolean true
   var pdfSrc=typeof scannedPdfs[id]==='string'?scannedPdfs[id]:null;
