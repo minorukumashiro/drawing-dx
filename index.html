@@ -1124,7 +1124,8 @@ function render(){
     }else{
       // Preview and edit grid
       var _dupCount=S.bulkItems.filter(function(it){return it.duplicate}).length;
-      h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:13px;font-weight:600">'+S.bulkItems.length+' 件の図面 <span style="color:var(--tx3);font-weight:400">（チェック: '+S.bulkSelected+' 件）</span>'+(_dupCount>0?'<span style="margin-left:10px;padding:2px 10px;border-radius:10px;background:#FEE2E2;color:#DC2626;font-size:11px;font-weight:600">⚠ 重複 '+_dupCount+' 件（チェック外し済）</span>':'')+'</div>';
+      var _visCount=S.bulkItems.filter(function(it){return !it.duplicate&&it.visualMatches&&it.visualMatches.length>0}).length;
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:13px;font-weight:600">'+S.bulkItems.length+' 件の図面 <span style="color:var(--tx3);font-weight:400">（チェック: '+S.bulkSelected+' 件）</span>'+(_dupCount>0?'<span style="margin-left:8px;padding:2px 10px;border-radius:10px;background:#FEE2E2;color:#DC2626;font-size:11px;font-weight:600">⚠ 図番重複 '+_dupCount+' 件</span>':'')+(_visCount>0?'<span style="margin-left:6px;padding:2px 10px;border-radius:10px;background:#FEF3C7;color:#D97706;font-size:11px;font-weight:600">🔍 画像類似 '+_visCount+' 件</span>':'')+'</div>';
       h+='<div style="display:flex;gap:8px"><button style="padding:6px 12px;font-size:11px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);cursor:pointer" onclick="bulkToggleAll(true)">全て選択</button><button style="padding:6px 12px;font-size:11px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);cursor:pointer" onclick="bulkToggleAll(false)">選択解除</button><button style="padding:6px 12px;font-size:11px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);cursor:pointer;color:var(--rd)" onclick="bulkReset()">リセット</button></div></div>';
       h+='<div style="max-height:60vh;overflow-y:auto;border:1px solid var(--bd);border-radius:var(--r);padding:8px;background:var(--bg2)">';
       h+='<table style="width:100%;border-collapse:collapse;font-size:12px">';
@@ -1133,7 +1134,13 @@ function render(){
         h+='<tr style="border-bottom:1px solid var(--bd);'+(item.checked?'':'opacity:0.5')+'">';
         h+='<td style="padding:6px;text-align:center"><input type="checkbox" '+(item.checked?'checked':'')+' onchange="bulkToggle('+idx+')"></td>';
         h+='<td style="padding:6px"><div style="width:60px;height:42px;background:#fff;border:1px solid var(--bd);border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center">'+(item.preview?'<img src="'+item.preview+'" style="max-width:100%;max-height:100%;object-fit:contain">':'<span style="font-size:9px;color:var(--tx3)">'+(item.loading?'...':'PDF')+'</span>')+'</div></td>';
-        h+='<td style="padding:6px;font-size:11px;color:var(--tx3);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(item.name)+'">'+(item.duplicate?'<span style="padding:1px 6px;border-radius:6px;background:#FEE2E2;color:#DC2626;font-size:9px;font-weight:700;margin-right:4px">重複</span>':'')+esc(item.name)+'</td>';
+        var _dupBadge=item.duplicate?'<span style="padding:1px 6px;border-radius:6px;background:#FEE2E2;color:#DC2626;font-size:9px;font-weight:700;margin-right:3px">図番重複</span>':'';
+        var _visBadge='';
+        if(item.visualMatches&&item.visualMatches.length>0){
+          var _vm=item.visualMatches[0];
+          _visBadge='<span title="既存: '+esc(_vm.number+' '+_vm.name)+' ('+_vm.sim+'%一致)" style="padding:1px 6px;border-radius:6px;background:#FEF3C7;color:#D97706;font-size:9px;font-weight:700;margin-right:3px;cursor:help">🔍 画像類似 '+_vm.sim+'%</span>';
+        }
+        h+='<td style="padding:6px;font-size:11px;color:var(--tx3);max-width:200px" title="'+esc(item.name)+'">'+_dupBadge+_visBadge+'<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:inline-block;max-width:120px;vertical-align:middle">'+esc(item.name)+'</span></td>';
         h+='<td style="padding:6px"><input value="'+esc(item.number||'')+'" oninput="S.bulkItems['+idx+'].number=this.value" style="width:100%;padding:4px 6px;border:1px solid var(--bd);border-radius:4px;font-size:11px"></td>';
         h+='<td style="padding:6px"><input value="'+esc(item.itemName||'')+'" oninput="S.bulkItems['+idx+'].itemName=this.value" style="width:100%;padding:4px 6px;border:1px solid var(--bd);border-radius:4px;font-size:11px"></td>';
         h+='<td style="padding:6px"><input list="clList" value="'+esc(item.client||'')+'" oninput="S.bulkItems['+idx+'].client=this.value" style="width:100%;padding:4px 6px;border:1px solid var(--bd);border-radius:4px;font-size:11px"></td>';
@@ -2126,43 +2133,104 @@ function bulkPickFiles(){
   input.click();
 }
 
+// === 画像指紋（パーセプチュアルハッシュ）による重複検知 ===
+var _imgHashCache={};
+
+function _calcHash(dataUrl,cb){
+  var img=new Image();
+  img.onload=function(){
+    try{
+      var cv=document.createElement('canvas');cv.width=8;cv.height=8;
+      var ctx=cv.getContext('2d');
+      ctx.drawImage(img,0,0,8,8);
+      var d=ctx.getImageData(0,0,8,8).data;
+      var gray=[],sum=0;
+      for(var i=0;i<64;i++){var g=0.299*d[i*4]+0.587*d[i*4+1]+0.114*d[i*4+2];gray.push(g);sum+=g;}
+      var avg=sum/64;
+      cb(gray.map(function(v){return v>=avg?'1':'0'}).join(''));
+    }catch(e){cb(null);}
+  };
+  img.onerror=function(){cb(null);};
+  img.src=dataUrl;
+}
+
+function _hashSim(h1,h2){
+  if(!h1||!h2||h1.length!==h2.length)return 0;
+  var s=0;for(var i=0;i<h1.length;i++)if(h1[i]===h2[i])s++;
+  return Math.round(s/h1.length*100);
+}
+
+function _findVisualMatches(hash,cb){
+  if(!hash){cb([]);return;}
+  var matches=[];
+  var tasks=DRAWINGS.map(function(d){
+    return new Promise(function(resolve){
+      // キャッシュ済みならすぐ比較
+      if(_imgHashCache[d.id]){
+        var sim=_hashSim(hash,_imgHashCache[d.id]);
+        if(sim>=85)matches.push({id:d.id,number:d.number,name:d.name,sim:sim});
+        resolve();return;
+      }
+      // サムネイルから計算
+      var src=pdfThumbnails[d.id]||scannedImages[d.id];
+      if(!src){resolve();return;}
+      _calcHash(src,function(h){
+        if(h)_imgHashCache[d.id]=h;
+        var sim=h?_hashSim(hash,h):0;
+        if(sim>=85)matches.push({id:d.id,number:d.number,name:d.name,sim:sim});
+        resolve();
+      });
+    });
+  });
+  Promise.all(tasks).then(function(){
+    matches.sort(function(a,b){return b.sim-a.sim});
+    cb(matches);
+  });
+}
+
 function bulkLoadPreview(idx){
   var item=S.bulkItems[idx];
   if(!item)return;
+
+  function onPreviewReady(previewDataUrl){
+    item.preview=previewDataUrl;
+    item.loading=false;
+    if(S.bulkOpen)render();
+    // 画像指紋で既存図面と比較
+    _calcHash(previewDataUrl,function(hash){
+      item._hash=hash;
+      _findVisualMatches(hash,function(matches){
+        if(matches.length>0){
+          item.visualMatches=matches;
+          // 図番ベースの重複でなくても画像一致ならチェック外し
+          if(!item.duplicate){item.checked=false;S.bulkSelected=S.bulkItems.filter(function(i){return i.checked}).length;}
+        }
+        if(S.bulkOpen)render();
+      });
+    });
+  }
+
   if(item.isPdf){
-    // PDF: render first page to data URL
     var r=new FileReader();
     r.onload=function(ev){
-      if(typeof pdfjsLib==='undefined'){
-        item.loading=false;render();return;
-      }
+      if(typeof pdfjsLib==='undefined'){item.loading=false;render();return;}
       try{
         var arr=atob(ev.target.result.split(',')[1]);
         var b=new Uint8Array(arr.length);
         for(var i=0;i<arr.length;i++)b[i]=arr.charCodeAt(i);
-        pdfjsLib.getDocument({data:b}).promise.then(function(pdf){
-          return pdf.getPage(1);
-        }).then(function(page){
+        pdfjsLib.getDocument({data:b}).promise.then(function(pdf){return pdf.getPage(1);}).then(function(page){
           var vp=page.getViewport({scale:0.3});
-          var cv=document.createElement('canvas');
-          cv.width=vp.width;cv.height=vp.height;
+          var cv=document.createElement('canvas');cv.width=vp.width;cv.height=vp.height;
           return page.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise.then(function(){
-            item.preview=cv.toDataURL('image/jpeg',0.7);
-            item.loading=false;
-            if(S.bulkOpen)render();
+            onPreviewReady(cv.toDataURL('image/jpeg',0.7));
           });
-        }).catch(function(){item.loading=false;if(S.bulkOpen)render()});
-      }catch(e){item.loading=false;if(S.bulkOpen)render()}
+        }).catch(function(){item.loading=false;if(S.bulkOpen)render();});
+      }catch(e){item.loading=false;if(S.bulkOpen)render();}
     };
     r.readAsDataURL(item.file);
   }else{
-    // Image: read as data URL
     var r=new FileReader();
-    r.onload=function(ev){
-      item.preview=ev.target.result;
-      item.loading=false;
-      if(S.bulkOpen)render();
-    };
+    r.onload=function(ev){onPreviewReady(ev.target.result);};
     r.readAsDataURL(item.file);
   }
 }
