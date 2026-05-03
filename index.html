@@ -1123,7 +1123,8 @@ function render(){
       h+='<div style="text-align:center;padding:40px 20px;border:2px dashed var(--bd);border-radius:var(--r);background:var(--bg2)"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#999" stroke-width="1.5" style="opacity:.5;margin-bottom:12px"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg><h3 style="margin-bottom:8px;font-size:15px">複数の図面ファイルを選択</h3><p style="font-size:12px;color:var(--tx3);margin-bottom:16px">PDF・画像を複数選択できます（Ctrl/Shift+クリック）</p><button class="btn-ac" style="padding:12px 24px;font-size:13px" onclick="bulkPickFiles()">📁 ファイルを選択</button></div>';
     }else{
       // Preview and edit grid
-      h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:13px;font-weight:600">'+S.bulkItems.length+' 件の図面 <span style="color:var(--tx3);font-weight:400">（チェック: '+S.bulkSelected+' 件）</span></div>';
+      var _dupCount=S.bulkItems.filter(function(it){return it.duplicate}).length;
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:13px;font-weight:600">'+S.bulkItems.length+' 件の図面 <span style="color:var(--tx3);font-weight:400">（チェック: '+S.bulkSelected+' 件）</span>'+(_dupCount>0?'<span style="margin-left:10px;padding:2px 10px;border-radius:10px;background:#FEE2E2;color:#DC2626;font-size:11px;font-weight:600">⚠ 重複 '+_dupCount+' 件（チェック外し済）</span>':'')+'</div>';
       h+='<div style="display:flex;gap:8px"><button style="padding:6px 12px;font-size:11px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);cursor:pointer" onclick="bulkToggleAll(true)">全て選択</button><button style="padding:6px 12px;font-size:11px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);cursor:pointer" onclick="bulkToggleAll(false)">選択解除</button><button style="padding:6px 12px;font-size:11px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);cursor:pointer;color:var(--rd)" onclick="bulkReset()">リセット</button></div></div>';
       h+='<div style="max-height:60vh;overflow-y:auto;border:1px solid var(--bd);border-radius:var(--r);padding:8px;background:var(--bg2)">';
       h+='<table style="width:100%;border-collapse:collapse;font-size:12px">';
@@ -1132,7 +1133,7 @@ function render(){
         h+='<tr style="border-bottom:1px solid var(--bd);'+(item.checked?'':'opacity:0.5')+'">';
         h+='<td style="padding:6px;text-align:center"><input type="checkbox" '+(item.checked?'checked':'')+' onchange="bulkToggle('+idx+')"></td>';
         h+='<td style="padding:6px"><div style="width:60px;height:42px;background:#fff;border:1px solid var(--bd);border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center">'+(item.preview?'<img src="'+item.preview+'" style="max-width:100%;max-height:100%;object-fit:contain">':'<span style="font-size:9px;color:var(--tx3)">'+(item.loading?'...':'PDF')+'</span>')+'</div></td>';
-        h+='<td style="padding:6px;font-size:11px;color:var(--tx3);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(item.name)+'">'+esc(item.name)+'</td>';
+        h+='<td style="padding:6px;font-size:11px;color:var(--tx3);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(item.name)+'">'+(item.duplicate?'<span style="padding:1px 6px;border-radius:6px;background:#FEE2E2;color:#DC2626;font-size:9px;font-weight:700;margin-right:4px">重複</span>':'')+esc(item.name)+'</td>';
         h+='<td style="padding:6px"><input value="'+esc(item.number||'')+'" oninput="S.bulkItems['+idx+'].number=this.value" style="width:100%;padding:4px 6px;border:1px solid var(--bd);border-radius:4px;font-size:11px"></td>';
         h+='<td style="padding:6px"><input value="'+esc(item.itemName||'')+'" oninput="S.bulkItems['+idx+'].itemName=this.value" style="width:100%;padding:4px 6px;border:1px solid var(--bd);border-radius:4px;font-size:11px"></td>';
         h+='<td style="padding:6px"><input list="clList" value="'+esc(item.client||'')+'" oninput="S.bulkItems['+idx+'].client=this.value" style="width:100%;padding:4px 6px;border:1px solid var(--bd);border-radius:4px;font-size:11px"></td>';
@@ -2032,18 +2033,20 @@ async function importAlritZip(e){
       // ファイル名から図番を推定（例: 03380-1525H など）
       var numMatch=fName.match(/([A-Z0-9]+-[A-Z0-9]+)/i)||fName.match(/(\d{3,}[-_]\d+)/);
       var guessedNumber=numMatch?numMatch[1]:'';
+      var existingDup=guessedNumber?DRAWINGS.find(function(d){return d.number===guessedNumber}):null;
       var item={
         name:fName,
         file:fObj,
         preview:null,
         loading:true,
-        checked:true,
+        checked:!existingDup,
         number:guessedNumber,
         itemName:fName.replace(/\.[^.]+$/,''),
-        client:'',
-        mat:'',
-        cat:'',
-        isPdf:isPdf
+        client:existingDup?existingDup.client:'',
+        mat:existingDup?existingDup.mat:'',
+        cat:existingDup?existingDup.cat:'',
+        isPdf:isPdf,
+        duplicate:!!existingDup
       };
       S.bulkItems.push(item);
       if(i%3===2)await new Promise(function(r){setTimeout(r,10)});
@@ -2187,7 +2190,10 @@ function bulkRemove(idx){
 async function bulkSubmit(){
   var selected=S.bulkItems.filter(function(i){return i.checked});
   if(selected.length===0){alert('登録する図面を選択してください');return}
-  if(!confirm(selected.length+' 件の図面を登録しますか？')) return;
+  var dupSelected=selected.filter(function(i){return i.duplicate});
+  var msg=selected.length+' 件の図面を登録しますか？';
+  if(dupSelected.length>0)msg+='\n\n⚠ うち '+dupSelected.length+' 件は既存の図番と重複しています。\nチェックを入れたまま登録すると上書きされます。';
+  if(!confirm(msg)) return;
   
   var prog=document.createElement('div');
   prog.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;padding:24px 32px;border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,0.3);z-index:9999;text-align:center;font-size:14px;min-width:280px';
@@ -2201,24 +2207,6 @@ async function bulkSubmit(){
       var st=document.getElementById('bulkProgStatus');
       if(st)st.textContent=(i+1)+' / '+selected.length+' — '+it.name;
       
-      // Build drawing record
-      var newDrawing={
-        id:nextId++,
-        number:it.number||('DWG-'+String(nextId).padStart(4,'0')),
-        name:it.itemName||it.name,
-        cat:it.cat||'未指定',
-        mat:it.mat||'未指定',
-        size:'未指定',
-        client:it.client||'未指定',
-        price:0,
-        date:new Date().toISOString().slice(0,10),
-        tags:[],
-        shape:'plate',
-        status:'検図中',
-        priority:'中',
-        scanned:true
-      };
-      
       // Load file as data URL
       var dataUrl=await new Promise(function(resolve){
         var r=new FileReader();
@@ -2226,18 +2214,46 @@ async function bulkSubmit(){
         r.onerror=function(){resolve(null)};
         r.readAsDataURL(it.file);
       });
-      
       if(!dataUrl)continue;
-      
-      if(it.isPdf){
-        scannedPdfs[newDrawing.id]=dataUrl;
-        if(it.preview)pdfThumbnails[newDrawing.id]=it.preview;
+
+      // 重複の場合は既存レコードを上書き、新規の場合は追加
+      var existRec=it.duplicate&&it.number?DRAWINGS.find(function(d){return d.number===it.number}):null;
+      if(existRec){
+        // ファイルデータのみ上書き（メタデータは保持）
+        if(it.isPdf){
+          scannedPdfs[existRec.id]=dataUrl;
+          if(it.preview)pdfThumbnails[existRec.id]=it.preview;
+        }else{
+          scannedImages[existRec.id]=dataUrl;
+        }
+        existRec.scanned=true;
+        added++;
       }else{
-        scannedImages[newDrawing.id]=dataUrl;
+        var newDrawing={
+          id:nextId++,
+          number:it.number||('DWG-'+String(nextId).padStart(4,'0')),
+          name:it.itemName||it.name,
+          cat:it.cat||'未指定',
+          mat:it.mat||'未指定',
+          size:'未指定',
+          client:it.client||'未指定',
+          price:0,
+          date:new Date().toISOString().slice(0,10),
+          tags:[],
+          shape:'plate',
+          status:'検図中',
+          priority:'中',
+          scanned:true
+        };
+        if(it.isPdf){
+          scannedPdfs[newDrawing.id]=dataUrl;
+          if(it.preview)pdfThumbnails[newDrawing.id]=it.preview;
+        }else{
+          scannedImages[newDrawing.id]=dataUrl;
+        }
+        DRAWINGS.unshift(newDrawing);
+        added++;
       }
-      
-      DRAWINGS.unshift(newDrawing);
-      added++;
       
       // Yield periodically
       if(i%2===1)await new Promise(function(r){setTimeout(r,30)});
