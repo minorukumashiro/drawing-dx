@@ -312,7 +312,7 @@ if(reqs.annotations.result)ANNOTATIONS=reqs.annotations.result;
         else MASTERS=JSON.parse(JSON.stringify(DEF_MASTERS));
         if(reqs.serverUrl.result)SERVER_URL=reqs.serverUrl.result;
         // Ensure 'その他' status exists
-        if(MASTERS.statuses&&MASTERS.statuses.indexOf('その他')<0)MASTERS.statuses.push('その他');
+        if(MASTERS.statuses&&MASTERS.statuses.indexOf('その他')<0)MASTERS.statuses.push('その他');if(MASTERS.statuses&&MASTERS.statuses.indexOf('完了')<0){var ni=MASTERS.statuses.indexOf('納品済');if(ni>=0)MASTERS.statuses.splice(ni,0,'完了');else MASTERS.statuses.push('完了');}
         // Render NOW with metadata - don't wait for images
         render();
         checkUrlAndOpen();
@@ -337,7 +337,7 @@ if(reqs.annotations.result)ANNOTATIONS=reqs.annotations.result;
       };
     }else{
       loadFromLocalStorage();
-      if(MASTERS.statuses&&MASTERS.statuses.indexOf('その他')<0)MASTERS.statuses.push('その他');
+      if(MASTERS.statuses&&MASTERS.statuses.indexOf('その他')<0)MASTERS.statuses.push('その他');if(MASTERS.statuses&&MASTERS.statuses.indexOf('完了')<0){var ni=MASTERS.statuses.indexOf('納品済');if(ni>=0)MASTERS.statuses.splice(ni,0,'完了');else MASTERS.statuses.push('完了');}
       render();
       checkUrlAndOpen();
     }
@@ -755,7 +755,7 @@ var DEF_MASTERS={
   materials:["SUS304","SUS316","SS400","S45C","SCM435","A5052","FC250","FCD450","SKD11","C3604","SPHC","SPCC"],
   shapes:[{v:"circle",l:"丸型"},{v:"shaft",l:"シャフト"},{v:"bracket",l:"ブラケット"},{v:"plate",l:"プレート"},{v:"spacer",l:"スペーサー"}],
   clients:["東洋機械工業","三和精機","大阪金属工業","山陽アルミ","新日本工機","関東バルブ","松本精密"],
-  statuses:["検図中","見積済","製造中","納品済","その他"],
+  statuses:["検図中","見積済","製造中","完了","納品済","その他"],
   surfaces:["メッキ","アルマイト","黒染め","ニッケル","クロム","亜鉛メッキ","無電解ニッケル","塗装"]
 };
 var MASTERS={};
@@ -836,7 +836,7 @@ function isMobileDevice(){return /Android|iPhone|iPad|iPod|Mobile/i.test(navigat
 var S={tab:'board',search:'',clientFilter:'',fcat:'すべて',minSim:0,sel:null,results:null,searching:false,detail:null,regOpen:false,regPrev:null,regName:'',regBlobUrl:null,regIsPdf:false,ocrSt:'idle',ocrF:{},invType:'見積書',invDrawing:null,invSearch:'',annoDrawing:null,annoSearch:'',annoPage:1,annoPageCount:0,annoTool:'pen',annoColor:'#C03030',annoStamps:[],annoQRs:[],annoTexts:[],annoLines:[],qrModal:null,qrOpen:false,qrResult:null,editOpen:false,editDwg:null,viewerId:null,bulkOpen:false,bulkItems:[],bulkSelected:0};
 
 function render(){
-  var app=document.getElementById('app'),sts=["検図中","見積済","製造中","納品済"],stC={"検図中":"#185FA5","見積済":"#B06E15","製造中":"var(--ac)","納品済":"#1B8C65"},stB={"検図中":"#E6F1FB","見積済":"#FDF3E0","製造中":"#EEEDFE","納品済":"#E8F5EE"},cats=["すべて"].concat(Array.from(new Set(DRAWINGS.map(function(d){return d.cat}))));
+  var app=document.getElementById('app'),sts=["検図中","見積済","製造中","完了","納品済"],stC={"検図中":"#185FA5","見積済":"#B06E15","製造中":"var(--ac)","完了":"#0E7490","納品済":"#1B8C65"},stB={"検図中":"#E6F1FB","見積済":"#FDF3E0","製造中":"#EEEDFE","完了":"#E0F7FA","納品済":"#E8F5EE"},cats=["すべて"].concat(Array.from(new Set(DRAWINGS.map(function(d){return d.cat}))));
   var fl=DRAWINGS.filter(function(d){if(S.fcat!=='すべて'&&d.cat!==S.fcat)return false;if(S.clientFilter){var cf=S.clientFilter.toLowerCase();if((d.client||'').toLowerCase().indexOf(cf)<0)return false}if(S.search){var q=S.search.toLowerCase();return d.name.toLowerCase().indexOf(q)>=0||d.number.toLowerCase().indexOf(q)>=0||d.mat.toLowerCase().indexOf(q)>=0||d.client.toLowerCase().indexOf(q)>=0||d.size.toLowerCase().indexOf(q)>=0||(d.tags||[]).join(' ').toLowerCase().indexOf(q)>=0}return true});
   var h='<div class="nav"><div class="nav-logo"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg></div><div><div class="nav-title">図面DXプラットフォーム</div><div class="nav-sub">AI図面管理・類似検索</div></div><div class="nav-tabs">';
   var _mobile=isMobileDevice();
@@ -1093,7 +1093,7 @@ function render(){
   }
 
   // QR SCAN RESULT MODAL
-  if(S.qrResult){var qr=S.qrResult;var stColor={'検図中':'#185FA5','見積済':'#B06E15','製造中':'#6C63FF','納品済':'#1B8C65'}[qr.status]||'#86868b';var stBg={'検図中':'#E6F1FB','見積済':'#FDF3E0','製造中':'#EEEDFE','納品済':'#E8F5EE'}[qr.status]||'#f5f5f7';function qrRow(l,v){return v?'<div style="background:#f5f5f7;border-radius:10px;padding:12px"><div style="font-size:10px;color:#86868b;margin-bottom:2px">'+l+'</div><div style="font-size:14px;font-weight:600;color:#1d1d1f">'+esc(String(v))+'</div></div>':'';}
+  if(S.qrResult){var qr=S.qrResult;var stColor={'検図中':'#185FA5','見積済':'#B06E15','製造中':'#6C63FF','完了':'#0E7490','納品済':'#1B8C65'}[qr.status]||'#86868b';var stBg={'検図中':'#E6F1FB','見積済':'#FDF3E0','製造中':'#EEEDFE','完了':'#E0F7FA','納品済':'#E8F5EE'}[qr.status]||'#f5f5f7';function qrRow(l,v){return v?'<div style="background:#f5f5f7;border-radius:10px;padding:12px"><div style="font-size:10px;color:#86868b;margin-bottom:2px">'+l+'</div><div style="font-size:14px;font-weight:600;color:#1d1d1f">'+esc(String(v))+'</div></div>':'';}
   h+='<div class="modal-bg" style="z-index:1100;background:rgba(0,0,0,0.6)" onclick="S.qrResult=null;render()"><div style="background:#fff;border-radius:20px;padding:24px;margin:40px 16px;max-width:480px;margin-left:auto;margin-right:auto;box-shadow:0 8px 40px rgba(0,0,0,0.2)" onclick="event.stopPropagation()">'
   +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px"><div><div style="font-size:11px;color:#86868b;margin-bottom:4px">図面情報カード</div><div style="font-size:18px;font-weight:700;color:#1d1d1f">'+esc(qr.name||'')+'</div><div style="font-size:12px;color:#86868b;margin-top:2px">'+esc(qr.number||'')+'</div></div>'
   +(qr.status?'<div style="padding:5px 14px;border-radius:20px;font-size:12px;font-weight:600;background:'+stBg+';color:'+stColor+'">'+esc(qr.status)+'</div>':'')
@@ -2508,8 +2508,8 @@ function genQRImage(id){
 
 function renderQRMobileCard(d){
   var ex=function(x){return String(x||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;')};
-  var stColor={'検図中':'#185FA5','見積済':'#B06E15','製造中':'#6C63FF','納品済':'#1B8C65'}[d.status]||'#86868b';
-  var stBg={'検図中':'#E6F1FB','見積済':'#FDF3E0','製造中':'#EEEDFE','納品済':'#E8F5EE'}[d.status]||'#f5f5f7';
+  var stColor={'検図中':'#185FA5','見積済':'#B06E15','製造中':'#6C63FF','完了':'#0E7490','納品済':'#1B8C65'}[d.status]||'#86868b';
+  var stBg={'検図中':'#E6F1FB','見積済':'#FDF3E0','製造中':'#EEEDFE','完了':'#E0F7FA','納品済':'#E8F5EE'}[d.status]||'#f5f5f7';
   function row(lbl,val){return '<div style="background:#f5f5f7;border-radius:10px;padding:12px"><div style="font-size:10px;color:#86868b;margin-bottom:2px">'+lbl+'</div><div style="font-size:14px;font-weight:600;color:#1d1d1f">'+ex(String(val||'—'))+'</div></div>';}
   document.title=d.number+' — '+ex(d.name);
   document.getElementById('app').innerHTML=
