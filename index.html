@@ -291,7 +291,7 @@ function loadData(){
       var tx=db.transaction('meta','readonly');
       var store=tx.objectStore('meta');
       var reqs={};
-      ['drawings','invoices','scannedPdfs','pdfThumbs','nextId','masters','serverUrl','inspections','folderHandle','folderName','googleDriveUrl','annotations'].forEach(function(k){
+      ['drawings','invoices','scannedPdfs','pdfThumbs','nextId','masters','serverUrl','inspections','annotations'].forEach(function(k){
         reqs[k]=store.get(k);
       });
       tx.oncomplete=function(){
@@ -306,12 +306,7 @@ function loadData(){
         scannedPdfs=reqs.scannedPdfs.result||{};
         pdfThumbnails=reqs.pdfThumbs.result||{};
         inspectionReports=reqs.inspections.result||{};
-        if(reqs.folderHandle.result){
-          drawingFolderHandle=reqs.folderHandle.result;
-          drawingFolderName=reqs.folderName.result||'(名称不明)';
-        }
-        if(reqs.googleDriveUrl.result)GOOGLE_DRIVE_URL=reqs.googleDriveUrl.result;
-        if(reqs.annotations.result)ANNOTATIONS=reqs.annotations.result;
+if(reqs.annotations.result)ANNOTATIONS=reqs.annotations.result;
         if(reqs.nextId.result)nextId=reqs.nextId.result;
         if(reqs.masters.result)MASTERS=reqs.masters.result;
         else MASTERS=JSON.parse(JSON.stringify(DEF_MASTERS));
@@ -320,6 +315,7 @@ function loadData(){
         if(MASTERS.statuses&&MASTERS.statuses.indexOf('その他')<0)MASTERS.statuses.push('その他');
         // Render NOW with metadata - don't wait for images
         render();
+        checkUrlAndOpen();
         // Load images from IndexedDB IN BACKGROUND
         var imgTx=db.transaction('images','readonly');
         var imgStore=imgTx.objectStore('images');
@@ -343,6 +339,7 @@ function loadData(){
       loadFromLocalStorage();
       if(MASTERS.statuses&&MASTERS.statuses.indexOf('その他')<0)MASTERS.statuses.push('その他');
       render();
+      checkUrlAndOpen();
     }
   });
 }
@@ -408,7 +405,6 @@ function saveAll(){
   dbPut('meta','masters',MASTERS);
   dbPut('meta','serverUrl',SERVER_URL);
   dbPut('meta','inspections',inspectionReports);
-  dbPut('meta','googleDriveUrl',GOOGLE_DRIVE_URL);
   dbPut('meta','annotations',ANNOTATIONS);
   // Save images individually
   Object.keys(scannedImages).forEach(function(id){
@@ -658,7 +654,9 @@ async function forceResyncImages(){
   }
 }
 
+var fbSyncState='connecting';
 function updateSyncStatus(state,msg){
+  fbSyncState=state;
   var el=document.getElementById('fbSyncStatus');
   if(!el)return;
   var cfg={
@@ -750,8 +748,6 @@ var DRAWINGS=[];
 var SIM={circle:{shaft:30,bracket:15,plate:20,spacer:58},shaft:{circle:30,bracket:20,plate:12,spacer:62},bracket:{circle:15,shaft:20,plate:45,spacer:12},plate:{circle:20,shaft:12,bracket:45,spacer:15},spacer:{circle:58,shaft:62,bracket:12,plate:15}};
 var INVOICES=[],scannedImages={},scannedPdfs={},scannedBlobUrls={},pdfThumbnails={},inspectionReports={},nextId=11;
 var ANNOTATIONS={}; // {drawingId: {stamps:[], qrs:[], texts:[], lines:[], updated:timestamp}}
-var drawingFolderHandle=null; // File System Access API handle
-var drawingFolderName=''; // Display name
 
 // マスターデータ（初期値）
 var DEF_MASTERS={
@@ -764,8 +760,17 @@ var DEF_MASTERS={
 };
 var MASTERS={};
 var SERVER_URL=''; // 例: http://192.168.1.100/drawing.html
-var GOOGLE_DRIVE_URL=''; // Googleドライブ共有フォルダURL
 
+// QRビューモード: ?data= パラメータがあれば図面カードを即時表示してアプリ初期化をスキップ
+(function(){
+  var s=window.location.search;
+  if(!s)return;
+  var m=s.match(/[?&]data=([^&]+)/);
+  if(!m)return;
+  try{var d=JSON.parse(decodeURIComponent(atob(m[1])));if(d&&d.number)renderQRMobileCard(d);}catch(ex){}
+})();
+
+if(!window._qrViewer){
 // Show loading indicator immediately
 document.getElementById('app').innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:#86868b;font-family:sans-serif"><div style="width:40px;height:40px;border:3px solid #e0e0e0;border-top-color:#0066CC;border-radius:50%;animation:spin 0.8s linear infinite"></div><div style="font-size:13px">読み込み中...</div></div><style>@keyframes spin{to{transform:rotate(360deg)}}</style>';
 
@@ -788,22 +793,21 @@ try{
 }catch(e){}
 
 loadData();
-// PDF viewer keyboard navigation
-document.addEventListener('keydown',function(e){
-  if(!S.pdfViewerDoc)return;
-  if(e.key==='ArrowLeft'||e.key==='PageUp'){pdfViewerGoTo(S.pdfViewerPage-1);e.preventDefault()}
-  else if(e.key==='ArrowRight'||e.key==='PageDown'){pdfViewerGoTo(S.pdfViewerPage+1);e.preventDefault()}
-  else if(e.key==='Escape'){closePdfViewer();e.preventDefault()}
-  else if(e.key==='Home'){pdfViewerGoTo(1);e.preventDefault()}
-  else if(e.key==='End'){pdfViewerGoTo(S.pdfViewerTotal);e.preventDefault()}
-});
+} // end if(!window._qrViewer)
 // Start Firebase realtime sync immediately (don't wait)
-if(fbEnabled){
+if(fbEnabled&&!window._qrViewer){
   setTimeout(function(){
-    fbStartListener();
-    updateSyncStatus('synced');
+    try{fbStartListener();}catch(e){
+      console.error('Firebase start error:',e);
+      updateSyncStatus('offline','Firebase接続失敗: '+e.message);
+      return;
+    }
+    // If onSnapshot hasn't fired within 10s, mark offline
+    setTimeout(function(){
+      if(fbSyncState==='connecting')updateSyncStatus('offline','接続タイムアウト');
+    },10000);
   },200);
-}else{
+}else if(!fbEnabled){
   setTimeout(function(){updateSyncStatus('offline','Firebase未接続')},500);
 }
 function shapeSVG(s,sz){sz=sz||56;var c=sz/2,a='stroke="#888" fill="none" stroke-width="1.5"';var m={circle:'<circle cx="'+c+'" cy="'+c+'" r="'+(sz*.36)+'" '+a+'/>'+[0,90,180,270].map(function(d){var r=sz*.25;return'<circle cx="'+(c+r*Math.cos(d*Math.PI/180))+'" cy="'+(c+r*Math.sin(d*Math.PI/180))+'" r="2" stroke="#aaa" fill="none"/>'}).join(''),shaft:'<rect x="'+(sz*.14)+'" y="'+(c-sz*.08)+'" width="'+(sz*.72)+'" height="'+(sz*.16)+'" '+a+'/>',bracket:'<polyline points="'+(sz*.25)+','+(sz*.2)+' '+(sz*.25)+','+(sz*.78)+' '+(sz*.75)+','+(sz*.78)+'" '+a+'/>',plate:'<rect x="'+(sz*.16)+'" y="'+(sz*.26)+'" width="'+(sz*.68)+'" height="'+(sz*.48)+'" '+a+'/>',spacer:'<ellipse cx="'+c+'" cy="'+(sz*.32)+'" rx="'+(sz*.26)+'" ry="'+(sz*.09)+'" '+a+'/><line x1="'+(sz*.24)+'" y1="'+(sz*.32)+'" x2="'+(sz*.24)+'" y2="'+(sz*.68)+'" '+a+'/><line x1="'+(sz*.76)+'" y1="'+(sz*.32)+'" x2="'+(sz*.76)+'" y2="'+(sz*.68)+'" '+a+'/><ellipse cx="'+c+'" cy="'+(sz*.68)+'" rx="'+(sz*.26)+'" ry="'+(sz*.09)+'" '+a+'/>'};return'<svg width="'+sz+'" height="'+sz+'" viewBox="0 0 '+sz+' '+sz+'">'+(m[s]||m.plate)+'</svg>'}
@@ -829,7 +833,7 @@ function getImgUrl(id){return pdfThumbnails[id]||scannedBlobUrls[id]||scannedIma
 function simColor(v){return v>=80?"#1B8C65":v>=50?"#B06E15":"#888"}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}
 function isMobileDevice(){return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)||window.innerWidth<=768}
-var S={tab:'board',search:'',clientFilter:'',fcat:'すべて',minSim:0,sel:null,results:null,searching:false,detail:null,regOpen:false,regPrev:null,regName:'',regBlobUrl:null,regIsPdf:false,ocrSt:'idle',ocrF:{},invType:'見積書',invDrawing:null,invSearch:'',annoDrawing:null,annoSearch:'',annoPage:1,annoPageCount:0,annoTool:'pen',annoColor:'#C03030',annoStamps:[],annoQRs:[],annoTexts:[],annoLines:[],qrModal:null,qrOpen:false,editOpen:false,editDwg:null,viewerId:null,pdfViewerFile:null,pdfViewerPage:1,pdfViewerTotal:0,pdfViewerDoc:null,pdfViewerName:'',bulkOpen:false,bulkItems:[],bulkSelected:0};
+var S={tab:'board',search:'',clientFilter:'',fcat:'すべて',minSim:0,sel:null,results:null,searching:false,detail:null,regOpen:false,regPrev:null,regName:'',regBlobUrl:null,regIsPdf:false,ocrSt:'idle',ocrF:{},invType:'見積書',invDrawing:null,invSearch:'',annoDrawing:null,annoSearch:'',annoPage:1,annoPageCount:0,annoTool:'pen',annoColor:'#C03030',annoStamps:[],annoQRs:[],annoTexts:[],annoLines:[],qrModal:null,qrOpen:false,editOpen:false,editDwg:null,viewerId:null,bulkOpen:false,bulkItems:[],bulkSelected:0};
 
 function render(){
   var app=document.getElementById('app'),sts=["検図中","見積済","製造中","納品済"],stC={"検図中":"#185FA5","見積済":"#B06E15","製造中":"var(--ac)","納品済":"#1B8C65"},stB={"検図中":"#E6F1FB","見積済":"#FDF3E0","製造中":"#EEEDFE","納品済":"#E8F5EE"},cats=["すべて"].concat(Array.from(new Set(DRAWINGS.map(function(d){return d.cat}))));
@@ -841,7 +845,8 @@ function render(){
   var _tabs=_mobile?[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'}]:[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'},{k:'master',l:'マスター管理'}];
   _tabs.forEach(function(t){h+='<button class="nav-tab'+(S.tab===t.k?' active':'')+'" onclick="setTab(\''+t.k+'\')">'+t.l+'</button>'});
   h+='<button class="nav-tab" style="background:var(--gn);color:#fff;font-weight:600;display:flex;align-items:center;gap:4px" onclick="startQRScanner()">📷 QRスキャン</button>';
-  h+='<div id="fbSyncStatus" style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;background:var(--bg2);color:var(--tx3);white-space:nowrap" title="Firebase同期状態">○ 接続中...</div>';
+  var _ssc=(function(){var cm={connecting:'#0066CC',pushing:'#0066CC',synced:'#1B8C65',error:'#D70015',offline:'#86868b'};var tm={connecting:'⟳ 接続中...',pushing:'⟳ 同期中...',synced:'✓ 同期済',error:'⚠ 同期エラー',offline:'○ オフライン'};return{c:cm[fbSyncState]||'#86868b',t:tm[fbSyncState]||'○ オフライン'};})();
+  h+='<div id="fbSyncStatus" style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;background:var(--bg2);color:'+_ssc.c+';white-space:nowrap" title="Firebase同期状態">'+_ssc.t+'</div>';
   if(!_mobile){
     h+='<button class="nav-tab" style="background:var(--ac);color:#fff;font-weight:600" onclick="openRegister()">+ 図面登録</button>';
     h+='<button class="nav-tab" style="background:#6E47A6;color:#fff;font-weight:600" onclick="openBulkRegister()">📚 一括登録</button>';
@@ -854,17 +859,19 @@ function render(){
   h+='</div>';
 
   // BOARD
-  if(S.tab==='board'){h+='<div class="section-title">案件ホワイトボード <button class="g-btn" style="margin-left:auto;padding:5px 14px;font-size:11px" onclick="openRegister()">+ 図面登録（OCR）</button></div><div class="board">';sts.forEach(function(st){var items=DRAWINGS.filter(function(d){return d.status===st});h+='<div class="board-col"><div class="board-col-head"><span class="dot" style="background:'+stC[st]+'"></span>'+st+'<span class="cnt">'+items.length+'</span></div>';items.forEach(function(d){var hasAnno=ANNOTATIONS[d.id]&&((ANNOTATIONS[d.id].lines&&ANNOTATIONS[d.id].lines.length)||(ANNOTATIONS[d.id].stamps&&ANNOTATIONS[d.id].stamps.length)||(ANNOTATIONS[d.id].texts&&ANNOTATIONS[d.id].texts.length)||(ANNOTATIONS[d.id].qrs&&ANNOTATIONS[d.id].qrs.length));h+='<div class="board-card" onclick="openDetail('+d.id+')"><div class="bc-title">'+d.name+(d.scanned?'<span class="badge badge-scan">スキャン</span>':'')+(hasAnno?'<span class="badge" style="background:#FDF3E0;color:#B06E15;margin-left:4px">✏ 書込</span>':'')+'</div><div class="bc-meta">'+d.number+' · '+d.client+'</div><div class="bc-tags"><span class="bc-tag" style="background:'+stB[st]+';color:'+stC[st]+'">'+st+'</span><span class="bc-tag" style="background:'+(d.priority==='高'?'var(--rd2)':d.priority==='中'?'var(--am2)':'var(--bg3)')+';color:'+(d.priority==='高'?'var(--rd)':d.priority==='中'?'var(--am)':'var(--tx3)')+'">'+d.priority+'</span></div><div style="display:flex;gap:4px;margin-top:6px"><button style="font-size:9px;padding:2px 6px;border-radius:4px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer" onclick="event.stopPropagation();selAnno('+d.id+');S.tab=\'annotate\';render()">書込</button><button style="font-size:9px;padding:2px 6px;border-radius:4px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer" onclick="event.stopPropagation();printDrawingImage('+d.id+')">印刷</button></div></div>'});h+='</div>'});h+='</div>'}
+  if(S.tab==='board'){h+='<div class="section-title">案件ホワイトボード '+(_mobile?'':'<button class="g-btn" style="margin-left:auto;padding:5px 14px;font-size:11px" onclick="openRegister()">+ 図面登録（OCR）</button>')+'</div><div class="board">';sts.forEach(function(st){var items=DRAWINGS.filter(function(d){return d.status===st});h+='<div class="board-col"><div class="board-col-head"><span class="dot" style="background:'+stC[st]+'"></span>'+st+'<span class="cnt">'+items.length+'</span></div>';items.forEach(function(d){var hasAnno=ANNOTATIONS[d.id]&&((ANNOTATIONS[d.id].lines&&ANNOTATIONS[d.id].lines.length)||(ANNOTATIONS[d.id].stamps&&ANNOTATIONS[d.id].stamps.length)||(ANNOTATIONS[d.id].texts&&ANNOTATIONS[d.id].texts.length)||(ANNOTATIONS[d.id].qrs&&ANNOTATIONS[d.id].qrs.length));h+='<div class="board-card" onclick="openDetail('+d.id+')"><div class="bc-title">'+d.name+(d.scanned?'<span class="badge badge-scan">スキャン</span>':'')+(hasAnno?'<span class="badge" style="background:#FDF3E0;color:#B06E15;margin-left:4px">✏ 書込</span>':'')+'</div><div class="bc-meta">'+d.number+' · '+d.client+'</div><div class="bc-tags"><span class="bc-tag" style="background:'+stB[st]+';color:'+stC[st]+'">'+st+'</span><span class="bc-tag" style="background:'+(d.priority==='高'?'var(--rd2)':d.priority==='中'?'var(--am2)':'var(--bg3)')+';color:'+(d.priority==='高'?'var(--rd)':d.priority==='中'?'var(--am)':'var(--tx3)')+'">'+d.priority+'</span></div><div style="display:flex;gap:4px;margin-top:6px"><button style="font-size:9px;padding:2px 6px;border-radius:4px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer" onclick="event.stopPropagation();selAnno('+d.id+');S.tab=\'annotate\';render()">書込</button><button style="font-size:9px;padding:2px 6px;border-radius:4px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer" onclick="event.stopPropagation();printDrawingImage('+d.id+')">印刷</button></div></div>'});h+='</div>'});h+='</div>'}
 
   // SEARCH
   // INTEGRATED LIST + AI SEARCH
   if(S.tab==='list'){
     h+='<div class="section-title">図面一覧</div>';
-    // Drag & drop area for AI similarity search
-    if(S.searching){
-      h+='<div class="drop" style="cursor:default"><div class="dots"><span></span><span></span><span></span></div><h3 style="color:var(--ac)">AI解析中...</h3><p style="font-size:11px;color:var(--tx3)">形状・材質・サイズ・カテゴリ・取引先・タグを総合分析</p></div>';
-    }else{
-      h+='<div class="drop" id="dz" ondragover="event.preventDefault();this.classList.add(\'over\')" ondragleave="this.classList.remove(\'over\')" ondrop="event.preventDefault();this.classList.remove(\'over\');handleDropSearch(event)" onclick="demoSearch()"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#999" stroke-width="1.5" style="opacity:.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg><h3>図面ファイルをドラッグ＆ドロップで登録（OCR自動読取）</h3><p>または既存のカードをドラッグで重複チェック（AI類似検索）</p></div>';
+    // Drag & drop area for AI similarity search (PC only)
+    if(!_mobile){
+      if(S.searching){
+        h+='<div class="drop" style="cursor:default"><div class="dots"><span></span><span></span><span></span></div><h3 style="color:var(--ac)">AI解析中...</h3><p style="font-size:11px;color:var(--tx3)">形状・材質・サイズ・カテゴリ・取引先・タグを総合分析</p></div>';
+      }else{
+        h+='<div class="drop" id="dz" ondragover="event.preventDefault();this.classList.add(\'over\')" ondragleave="this.classList.remove(\'over\')" ondrop="event.preventDefault();this.classList.remove(\'over\');handleDropSearch(event)" onclick="demoSearch()"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#999" stroke-width="1.5" style="opacity:.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg><h3>図面ファイルをドラッグ＆ドロップで登録（OCR自動読取）</h3><p>または既存のカードをドラッグで重複チェック（AI類似検索）</p></div>';
+      }
     }
     // Show AI search results if available
     if(S.sel&&S.results){
@@ -895,7 +902,6 @@ function render(){
           +'<div class="g-meta">'+d.number+' · '+d.mat+' · <span style="color:var(--ac)">'+esc(d.client)+'</span></div>'
           +'<div class="g-foot"><span class="g-cat">'+d.cat+'</span>'
           +'<button class="g-btn" style="font-size:10px;padding:2px 8px" onclick="event.stopPropagation();selAnno('+d.id+');S.tab=\'annotate\';render()">書込</button>'
-          +'<button class="g-btn" style="font-size:10px;padding:2px 8px" onclick="event.stopPropagation();printDrawingImage('+d.id+')">印刷</button>'
           +'<button class="g-btn" style="font-size:10px;padding:2px 8px" onclick="event.stopPropagation();S.invDrawing=DRAWINGS.find(function(x){return x.id==='+d.id+'});S.tab=\'invoice\';render()">帳票</button>'
           +'<button class="g-btn" onclick="event.stopPropagation();doSearch(DRAWINGS.find(function(x){return x.id==='+d.id+'}))">類似検索</button>'
           +'</div></div>';
@@ -974,18 +980,6 @@ function render(){
   // MASTER MANAGEMENT
   if(S.tab==='master'){
     h+='<div class="section-title">マスター管理 <button class="g-btn" style="margin-left:auto;padding:5px 14px;font-size:11px" onclick="importMastersFromDrawings()">登録図面から取込</button></div>';
-    // Drawing folder link (for large-scale storage)
-    h+='<div style="background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:16px;margin-bottom:16px">';
-    h+='<div style="font-weight:600;font-size:13px;margin-bottom:8px;color:var(--tx)">📁 図面フォルダ連携（大量保存用）</div>';
-    h+='<div style="font-size:11px;color:var(--tx3);margin-bottom:10px">図面ファイル（PDF/画像）は自分のPCのフォルダに保管し、DXプラットフォームにはメタデータとリンクだけ保存します。<br>この方式なら数千〜1万枚以上の図面を管理可能です。</div>';
-    h+='<div style="display:flex;gap:6px;align-items:center">';
-    h+='<button class="g-btn" style="padding:8px 14px;font-size:12px" onclick="pickDrawingFolder()">📁 フォルダを選択</button>';
-    if(drawingFolderName)h+='<div style="padding:8px 12px;background:var(--gn2);color:var(--gn);border-radius:6px;font-size:11px;font-weight:500">✓ '+esc(drawingFolderName)+'</div>';
-    if(drawingFolderName)h+='<button style="padding:8px 14px;font-size:11px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);color:var(--rd);cursor:pointer" onclick="clearDrawingFolder()">解除</button>';
-    h+='</div>';
-    if(!drawingFolderName)h+='<div style="margin-top:8px;padding:8px 12px;background:var(--am2);border-radius:6px;font-size:11px;color:var(--am)">⚠ Chrome/Edgeブラウザでのみ動作します。Safariは非対応。</div>';
-    h+='</div>';
-
     // Data export/import
     h+='<div style="background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:16px;margin-bottom:16px">';
     h+='<div style="font-weight:600;font-size:13px;margin-bottom:8px;color:var(--tx)">💾 データ管理（バックアップ・復元）</div>';
@@ -1004,14 +998,6 @@ function render(){
     h+='<div style="font-size:11px;color:var(--tx3);margin-bottom:10px">サーバーURLを設定すると、QRコードにURLが埋め込まれ、スマホで読み取るとブラウザで図面情報ページが開きます。<br>drawing.htmlをサーバーに配置してください。</div>';
     h+='<div style="display:flex;gap:6px;align-items:center"><input id="serverUrlInput" placeholder="例: http://192.168.100.6:8080/drawing.html" value="'+esc(SERVER_URL)+'" style="flex:1;padding:8px 12px;border:1px solid var(--bd);border-radius:6px;font-size:12px"><button class="g-btn" style="padding:8px 14px;font-size:11px" onclick="saveServerUrl()">保存</button>'+(SERVER_URL?'<button style="padding:8px 14px;font-size:11px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);color:var(--rd);cursor:pointer" onclick="clearServerUrl()">解除</button>':'')+'</div>';
     if(SERVER_URL)h+='<div style="margin-top:8px;padding:8px 12px;background:#E8F5EE;border-radius:6px;font-size:11px;color:#1B8C65">✓ サーバー連動ON — QRコードにURL「'+esc(SERVER_URL)+'?data=...」が埋め込まれます</div>';
-    h+='</div>';
-    // Google Drive shared folder URL
-    h+='<div style="background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:16px;margin-bottom:16px">';
-    h+='<div style="font-weight:600;font-size:13px;margin-bottom:8px;color:var(--tx)">📁 Googleドライブ共有フォルダ連携</div>';
-    h+='<div style="font-size:11px;color:var(--tx3);margin-bottom:10px">図面ファイル（PDF/画像）をGoogleドライブの共有フォルダに置き、スマホでも閲覧できるようにします。<br>①共有フォルダURL：トップから「📁 フォルダを開く」で全図面を探す<br>②各図面個別URL：詳細パネルから直接該当ファイルを開く</div>';
-    h+='<div style="display:flex;gap:6px;align-items:center"><input id="googleDriveUrlInput" placeholder="例: https://drive.google.com/drive/folders/XXXXX" value="'+esc(GOOGLE_DRIVE_URL)+'" style="flex:1;padding:8px 12px;border:1px solid var(--bd);border-radius:6px;font-size:12px"><button class="g-btn" style="padding:8px 14px;font-size:11px" onclick="saveGoogleDriveUrl()">保存</button>'+(GOOGLE_DRIVE_URL?'<button style="padding:8px 14px;font-size:11px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);color:var(--rd);cursor:pointer" onclick="clearGoogleDriveUrl()">解除</button>':'')+'</div>';
-    if(GOOGLE_DRIVE_URL)h+='<div style="margin-top:8px;padding:8px 12px;background:#E8F5EE;border-radius:6px;font-size:11px;color:#1B8C65">✓ 共有フォルダ連携ON — 各図面詳細から「📁 共有フォルダを開く」ボタンでアクセス可能</div>';
-    h+='<div style="margin-top:8px;padding:8px 12px;background:var(--bg2);border-radius:6px;font-size:10px;color:var(--tx3)">💡 共有フォルダの作成方法：Googleドライブで右クリック→「共有」→「リンクを知っている全員」→URLをここに貼り付け</div>';
     h+='</div>';
     h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px">';
     var masterSections=[
@@ -1057,23 +1043,19 @@ function render(){
     +(hasImg?'<div style="position:absolute;bottom:4px;right:4px;background:rgba(0,0,0,0.5);color:#fff;padding:2px 8px;border-radius:4px;font-size:9px">クリックで拡大</div>':'')
     +'</div>'
     +'<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">'
-    +'<span style="padding:2px 8px;border-radius:6px;font-size:10px;background:var(--bg2);color:var(--tx2);border:1px solid var(--bd)">図面: '+fileInfo+'</span>'
-    +(hasImg?'<button style="padding:2px 8px;border-radius:6px;font-size:10px;background:var(--bg2);color:var(--ac);border:1px solid var(--bd);cursor:pointer" onclick="downloadDrawingFile('+d.id+')">ダウンロード</button>':'')
-    +'<button style="padding:2px 8px;border-radius:6px;font-size:10px;background:var(--bg2);color:var(--tx2);border:1px solid var(--bd);cursor:pointer" onclick="reuploadImage('+d.id+')">'+(hasImg?'差替':'図面アップ')+'</button>'
-    +(d.gdriveUrl?'<button style="padding:2px 8px;border-radius:6px;font-size:10px;background:#E8F0FE;color:#1a73e8;border:1px solid #c6daff;cursor:pointer" onclick="openDrawingGDrive('+d.id+')">📁 Drive開く</button>':'')
-    +'<button style="padding:2px 8px;border-radius:6px;font-size:10px;background:var(--bg2);color:var(--tx2);border:1px solid var(--bd);cursor:pointer" onclick="editDrawingGDriveUrl('+d.id+')">'+(d.gdriveUrl?'🔗 URL編集':'🔗 Drive紐付け')+'</button>'
-    +(GOOGLE_DRIVE_URL?'<button style="padding:2px 8px;border-radius:6px;font-size:10px;background:#E8F0FE;color:#1a73e8;border:1px solid #c6daff;cursor:pointer" onclick="openSharedFolder()">📁 共有フォルダ</button>':'')
+    +(!isMobileDevice()?'<span style="padding:2px 8px;border-radius:6px;font-size:10px;background:var(--bg2);color:var(--tx2);border:1px solid var(--bd)">図面: '+fileInfo+'</span>':'')
+    +(hasImg&&!isMobileDevice()?'<button style="padding:2px 8px;border-radius:6px;font-size:10px;background:var(--bg2);color:var(--ac);border:1px solid var(--bd);cursor:pointer" onclick="downloadDrawingFile('+d.id+')">ダウンロード</button>':'')
     +'</div>'
-    +(d._sim?'<div style="margin-bottom:14px"><div style="font-size:11px;color:var(--tx3);margin-bottom:4px">類似度</div><div class="sim-wrap"><div class="sim-bar"><div class="sim-fill" style="width:'+d._sim+'%;background:'+simColor(d._sim)+'"></div></div><span class="sim-pct" style="color:'+simColor(d._sim)+'">'+d._sim+'%</span></div></div>':'')+'<div class="side-fields">'+[["カテゴリ",d.cat],["材質",d.mat],["サイズ",d.size],["取引先",d.client],["単価","&yen;"+d.price.toLocaleString()],["ステータス",d.status],["日付",d.date]].map(function(p){return'<div class="side-field"><span class="fl">'+p[0]+'</span><span class="fv">'+p[1]+'</span></div>'}).join('')+'</div><div style="font-size:11px;color:var(--tx3);margin-bottom:6px">タグ</div><div class="side-tags">'+(d.tags||[]).map(function(t){return'<span class="side-tag">'+t+'</span>'}).join('')+'</div>'+renderLinkedFilesHTML(d)+'<div style="background:var(--bg2);border-radius:var(--r);padding:14px;margin-bottom:16px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-size:12px;font-weight:700;color:var(--tx);display:flex;align-items:center;gap:6px">📋 検査報告書<span style="font-weight:400;color:var(--tx3);font-size:11px">('+(inspectionReports[d.id]||[]).length+'件)</span></div><button class="g-btn" style="padding:4px 10px;font-size:11px" onclick="uploadInspection('+d.id+')">+ 追加</button></div>'+((inspectionReports[d.id]||[]).length===0?'<div style="font-size:11px;color:var(--tx3);text-align:center;padding:8px">検査報告書なし</div>':'<div style="display:flex;flex-direction:column;gap:6px">'+(inspectionReports[d.id]||[]).map(function(r,i){return'<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--bd);border-radius:8px;font-size:11px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#C03030" stroke-width="1.5" style="flex-shrink:0"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><div style="flex:1;min-width:0"><div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.name)+'</div><div style="color:var(--tx3);font-size:10px">'+r.date+'</div></div><button class="g-btn" style="padding:3px 8px;font-size:10px" onclick="viewInspection('+d.id+','+i+')">表示</button><button style="padding:3px 8px;font-size:10px;border-radius:5px;border:none;background:var(--rd2);color:var(--rd);cursor:pointer" onclick="delInspection('+d.id+','+i+')">×</button></div>'}).join('')+'</div>')+'</div>'+(isMobileDevice()?'<div class="side-actions"><button class="btn-ac" onclick="downloadDrawingFile('+d.id+')">📄 開く/DL</button><button class="btn-ac" onclick="closeDetail();selAnno('+d.id+');S.tab=\'annotate\';render()">✏ 書込</button></div>':'<div class="side-actions"><button class="btn-ac" onclick="closeDetail();doSearch(DRAWINGS.find(function(x){return x.id==='+d.id+'}))">類似検索</button><button class="btn-ac" onclick="closeDetail();S.invDrawing=DRAWINGS.find(function(x){return x.id==='+d.id+'});S.tab=\'invoice\';render()">帳票</button><button class="btn-ac" onclick="closeDetail();selAnno('+d.id+');S.tab=\'annotate\';render()">書込</button><button class="btn-ac" onclick="editDrawing('+d.id+')">編集</button><button class="btn-ac" onclick="printDetail('+d.id+')">情報印刷</button><button class="btn-ac" onclick="printDrawingImage('+d.id+')">図面印刷</button><button class="btn-ac" onclick="genQRImage('+d.id+')">QR作成</button><button style="background:var(--rd2);color:var(--rd)" onclick="delDrawing('+d.id+')">削除</button></div>')+'</div></div></div>'}
+    +(d._sim?'<div style="margin-bottom:14px"><div style="font-size:11px;color:var(--tx3);margin-bottom:4px">類似度</div><div class="sim-wrap"><div class="sim-bar"><div class="sim-fill" style="width:'+d._sim+'%;background:'+simColor(d._sim)+'"></div></div><span class="sim-pct" style="color:'+simColor(d._sim)+'">'+d._sim+'%</span></div></div>':'')+'<div class="side-fields">'+[["カテゴリ",d.cat],["材質",d.mat],["サイズ",d.size],["取引先",d.client],["単価","&yen;"+d.price.toLocaleString()],["ステータス",d.status],["日付",d.date]].map(function(p){return'<div class="side-field"><span class="fl">'+p[0]+'</span><span class="fv">'+p[1]+'</span></div>'}).join('')+'</div><div style="font-size:11px;color:var(--tx3);margin-bottom:6px">タグ</div><div class="side-tags">'+(d.tags||[]).map(function(t){return'<span class="side-tag">'+t+'</span>'}).join('')+'</div>'+'<div style="background:var(--bg2);border-radius:var(--r);padding:14px;margin-bottom:16px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-size:12px;font-weight:700;color:var(--tx);display:flex;align-items:center;gap:6px">📋 検査報告書<span style="font-weight:400;color:var(--tx3);font-size:11px">('+(inspectionReports[d.id]||[]).length+'件)</span></div><button class="g-btn" style="padding:4px 10px;font-size:11px" onclick="uploadInspection('+d.id+')">+ 追加</button></div>'+((inspectionReports[d.id]||[]).length===0?'<div style="font-size:11px;color:var(--tx3);text-align:center;padding:8px">検査報告書なし</div>':'<div style="display:flex;flex-direction:column;gap:6px">'+(inspectionReports[d.id]||[]).map(function(r,i){return'<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--bd);border-radius:8px;font-size:11px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#C03030" stroke-width="1.5" style="flex-shrink:0"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><div style="flex:1;min-width:0"><div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.name)+'</div><div style="color:var(--tx3);font-size:10px">'+r.date+'</div></div><button class="g-btn" style="padding:3px 8px;font-size:10px" onclick="viewInspection('+d.id+','+i+')">表示</button><button style="padding:3px 8px;font-size:10px;border-radius:5px;border:none;background:var(--rd2);color:var(--rd);cursor:pointer" onclick="delInspection('+d.id+','+i+')">×</button></div>'}).join('')+'</div>')+'</div>'+(isMobileDevice()?'<div class="side-actions"><button class="btn-ac" onclick="downloadDrawingFile('+d.id+')">ダウンロード</button><button class="btn-ac" onclick="closeDetail();selAnno('+d.id+');S.tab=\'annotate\';render()">✏ 書込</button></div>':'<div class="side-actions"><button class="btn-ac" onclick="closeDetail();doSearch(DRAWINGS.find(function(x){return x.id==='+d.id+'}))">類似検索</button><button class="btn-ac" onclick="closeDetail();S.invDrawing=DRAWINGS.find(function(x){return x.id==='+d.id+'});S.tab=\'invoice\';render()">帳票</button><button class="btn-ac" onclick="closeDetail();selAnno('+d.id+');S.tab=\'annotate\';render()">書込</button><button class="btn-ac" onclick="editDrawing('+d.id+')">編集</button><button class="btn-ac" onclick="printDetail('+d.id+')">情報印刷</button><button class="btn-ac" onclick="printDrawingImage('+d.id+')">図面印刷</button><button class="btn-ac" onclick="genQRImage('+d.id+')">QR作成</button><button style="background:var(--rd2);color:var(--rd)" onclick="delDrawing('+d.id+')">削除</button></div>')+'</div></div></div>'}
 
   // REGISTER
   if(S.regOpen){var of=S.ocrF;var ocr='';if(S.ocrSt==='running')ocr='<div class="ocr-bar run"><div class="dots" style="margin:0"><span></span><span></span><span></span></div>AI読取中... 図面のテキストを解析しています</div>';else if(S.ocrSt==='done'){var cnt=0;if(of.number)cnt++;if(of.name)cnt++;if(of.material)cnt++;if(of.size)cnt++;if(of.client)cnt++;if(of.surface)cnt++;ocr='<div class="ocr-bar ok"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>AI読取完了 — '+cnt+'項目を自動検出・入力しました'+(of.surface?' (表面処理:'+esc(of.surface)+')':'')+(of.tolerance?' (公差:'+esc(of.tolerance)+')':'')+(of.roughness?' (粗さ:'+esc(of.roughness)+')':'')+'</div>'}
-  h+='<div class="modal-bg" onclick="closeReg()"><div class="modal" onclick="event.stopPropagation()"><div class="modal-head"><h2>図面登録（AI-OCR取込）</h2><button class="close-btn" onclick="closeReg()">&times;</button></div><div style="padding:18px 22px"><div class="upload-area '+(S.regPrev?'has':'')+'">'+(S.regPrev?(S.regIsPdf?'<div style="text-align:center;padding:10px"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#C03030" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><div style="margin-top:4px;font-size:11px;color:#C03030;font-weight:500">PDF読込済</div></div>':'<img id="regPrevImg" style="max-width:100%;max-height:160px;object-fit:contain;border-radius:6px;display:block;margin:0 auto">')+'<div style="margin-top:6px;font-size:11px;color:var(--gn);font-weight:500">'+esc(S.regName)+'</div>':'<h3 style="font-size:12px;margin-top:4px">スキャン図面をアップロード</h3><p style="font-size:11px;color:var(--tx3)">PDF,PNG,JPEG対応・OCR自動読取</p>')+'<input type="file" accept="image/*,.pdf" onchange="handleFile(event)"></div>'+ocr+'<div class="f-row"><div class="f-field"><label>図面番号*'+(of.number?'<span class="ocr-tag">OCR</span>':'')+'</label><input id="rN" class="'+(of.number?'ocr-filled':'')+'" value="'+esc(of.number||'DWG-'+String(400+nextId).padStart(4,'0'))+'"></div><div class="f-field"><label>図面名称*'+(of.name?'<span class="ocr-tag">OCR</span>':'')+'</label><input id="rNm" class="'+(of.name?'ocr-filled':'')+'" value="'+esc(of.name||'')+'"></div></div><div class="f-row"><div class="f-field"><label>カテゴリ</label><select id="rC">'+MASTERS.categories.map(function(c){return'<option'+(of.category===c?' selected':'')+'>'+c+'</option>'}).join('')+'</select></div><div class="f-field"><label>形状</label><select id="rSh">'+MASTERS.shapes.map(function(s){return'<option value="'+s.v+'">'+s.l+'</option>'}).join('')+'</select></div></div><div class="f-row"><div class="f-field"><label>材質'+(of.material?'<span class="ocr-tag">OCR</span>':'')+'</label><input id="rM" list="matList" class="'+(of.material?'ocr-filled':'')+'" value="'+esc(of.material||'')+'"></div><div class="f-field"><label>サイズ'+(of.size?'<span class="ocr-tag">OCR</span>':'')+'</label><input id="rSz" class="'+(of.size?'ocr-filled':'')+'" value="'+esc(of.size||'')+'"></div></div><div class="f-row"><div class="f-field"><label>取引先</label><input id="rCl" list="clList" value="'+esc(of.client||'')+'"></div><div class="f-field"><label>単価</label><input id="rPr" type="number"></div></div><div class="f-field" style="margin-bottom:12px"><label>タグ</label><input id="rTg" value="'+esc(of.tags||'')+'"></div><div class="f-field"><label>OCRテキスト</label><textarea readonly style="background:var(--bg2);font-size:10px;color:var(--tx2)">'+esc(of.rawText||'アップロード後に表示')+'</textarea></div></div><div class="modal-foot"><button class="btn-cancel" onclick="closeReg()">キャンセル</button><button class="btn-save" onclick="saveDwg()"'+(S.ocrSt==='running'?' disabled':'')+'>登録</button></div></div></div>'}
+  h+='<div class="modal-bg" onclick="closeReg()"><div class="modal" onclick="event.stopPropagation()"><div class="modal-head"><h2>図面登録（AI-OCR取込）</h2><button class="close-btn" onclick="closeReg()">&times;</button></div><div style="padding:18px 22px"><div class="upload-area '+(S.regPrev?'has':'')+'">'+(S.regPrev?(S.regIsPdf?'<div style="text-align:center;padding:10px"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#C03030" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><div style="margin-top:4px;font-size:11px;color:#C03030;font-weight:500">PDF読込済</div></div>':'<img id="regPrevImg" style="max-width:100%;max-height:160px;object-fit:contain;border-radius:6px;display:block;margin:0 auto">')+'<div style="margin-top:6px;font-size:11px;color:var(--gn);font-weight:500">'+esc(S.regName)+'</div>':'<h3 style="font-size:12px;margin-top:4px">スキャン図面をアップロード</h3><p style="font-size:11px;color:var(--tx3)">PDF,PNG,JPEG対応・OCR自動読取</p>')+'<input type="file" accept="image/*,.pdf" onchange="handleFile(event)"></div>'+ocr+'<div class="f-row"><div class="f-field"><label>図面番号*'+(of.number?'<span class="ocr-tag">OCR</span>':'')+'</label><input id="rN" class="'+(of.number?'ocr-filled':'')+'" value="'+esc(of.number||'DWG-'+String(400+nextId).padStart(4,'0'))+'"></div><div class="f-field"><label>図面名称*'+(of.name?'<span class="ocr-tag">OCR</span>':'')+'</label><input id="rNm" class="'+(of.name?'ocr-filled':'')+'" value="'+esc(of.name||'')+'"></div></div><div class="f-row"><div class="f-field"><label>カテゴリ</label><select id="rC">'+MASTERS.categories.map(function(c){return'<option'+(of.category===c?' selected':'')+'>'+c+'</option>'}).join('')+'</select></div><div class="f-field"><label>形状</label><select id="rSh">'+MASTERS.shapes.map(function(s){return'<option value="'+s.v+'">'+s.l+'</option>'}).join('')+'</select></div></div><div class="f-row"><div class="f-field"><label>材質'+(of.material?'<span class="ocr-tag">OCR</span>':'')+'</label><input id="rM" list="matList" class="'+(of.material?'ocr-filled':'')+'" value="'+esc(of.material||'')+'"></div><div class="f-field"><label>サイズ'+(of.size?'<span class="ocr-tag">OCR</span>':'')+'</label><input id="rSz" class="'+(of.size?'ocr-filled':'')+'" value="'+esc(of.size||'')+'"></div></div><div class="f-row"><div class="f-field"><label>取引先</label><input id="rCl" list="clList" value="'+esc(of.client||'')+'"></div><div class="f-field"><label>単価</label><input id="rPr" type="number"></div></div><div class="f-row"><div class="f-field"><label>ステータス</label><select id="rSt">'+MASTERS.statuses.map(function(s){return'<option>'+s+'</option>'}).join('')+'</select></div><div class="f-field"><label>優先度</label><select id="rPri">'+["高","中","低"].map(function(p){return'<option'+(p==="中"?' selected':'')+'>'+p+'</option>'}).join('')+'</select></div></div><div class="f-field" style="margin-bottom:12px"><label>タグ</label><input id="rTg" value="'+esc(of.tags||'')+'"></div><div class="f-field"><label>OCRテキスト</label><textarea readonly style="background:var(--bg2);font-size:10px;color:var(--tx2)">'+esc(of.rawText||'アップロード後に表示')+'</textarea></div></div><div class="modal-foot"><button class="btn-cancel" onclick="closeReg()">キャンセル</button><button class="btn-save" onclick="saveDwg()"'+(S.ocrSt==='running'?' disabled':'')+'>登録</button></div></div></div>'}
 
   // EDIT MODAL
   if(S.editOpen&&S.editDwg){var ed=S.editDwg;
     h+='<div class="modal-bg" onclick="closeEdit()"><div class="modal" onclick="event.stopPropagation()"><div class="modal-head"><h2>図面編集: '+esc(ed.number)+'</h2><button class="close-btn" onclick="closeEdit()">&times;</button></div><div style="padding:18px 22px">'
-    +'<div style="text-align:center;margin-bottom:14px;background:var(--bg2);border-radius:var(--r);padding:12px;min-height:60px">'+thumb(ed,180)+'<button style="margin-top:8px;padding:4px 12px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--tx2);font-size:10px;cursor:pointer" onclick="reuploadImage('+ed.id+');closeEdit()">図面を再アップロード</button></div>'
+    +'<div style="text-align:center;margin-bottom:14px;background:var(--bg2);border-radius:var(--r);padding:12px;min-height:60px">'+thumb(ed,180)+(!isMobileDevice()?'<button style="margin-top:8px;padding:4px 12px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--tx2);font-size:10px;cursor:pointer" onclick="reuploadImage('+ed.id+');closeEdit()">図面を再アップロード</button>':'')+'</div>'
     +'<div class="f-row"><div class="f-field"><label>図面番号</label><input id="eN" value="'+esc(ed.number)+'"></div><div class="f-field"><label>図面名称</label><input id="eNm" value="'+esc(ed.name)+'"></div></div>'
     +'<div class="f-row"><div class="f-field"><label>カテゴリ</label><select id="eC">'+MASTERS.categories.map(function(c){return'<option'+(ed.cat===c?' selected':'')+'>'+c+'</option>'}).join('')+'</select></div><div class="f-field"><label>形状</label><select id="eSh">'+MASTERS.shapes.map(function(s){return'<option value="'+s.v+'"'+(ed.shape===s.v?' selected':'')+'>'+s.l+'</option>'}).join('')+'</select></div></div>'
     +'<div class="f-row"><div class="f-field"><label>材質</label><input id="eM" list="matList" value="'+esc(ed.mat)+'"></div><div class="f-field"><label>サイズ</label><input id="eSz" value="'+esc(ed.size)+'"></div></div>'
@@ -1105,31 +1087,9 @@ function render(){
       +'<div style="flex:1;width:100%;display:flex;align-items:center;justify-content:center;overflow:auto;padding:60px 20px 80px"><img data-scanimg="'+S.viewerId+'" id="viewerImg" style="width:98vw;max-height:88vh;object-fit:contain;border-radius:4px;box-shadow:0 4px 24px rgba(0,0,0,0.5);cursor:zoom-in;background:#fff" onclick="toggleViewerZoom(this)"></div>'
       +'<div style="position:absolute;bottom:16px;left:50%;transform:translateX(-50%);display:flex;gap:10px;background:rgba(0,0,0,0.5);padding:8px;border-radius:12px">'
       +'<button style="padding:8px 20px;border-radius:8px;background:#fff;color:#333;border:none;cursor:pointer;font-size:12px" onclick="downloadDrawingFile('+S.viewerId+')">ダウンロード</button>'
-      +'<button style="padding:8px 20px;border-radius:8px;background:#fff;color:#333;border:none;cursor:pointer;font-size:12px" onclick="printDrawingImage('+S.viewerId+')">印刷</button>'
       +'<button style="padding:8px 20px;border-radius:8px;background:#fff;color:#333;border:none;cursor:pointer;font-size:12px" onclick="closeViewer();selAnno('+S.viewerId+');S.tab=\'annotate\';render()">書込</button>'
-      +'<button style="padding:8px 20px;border-radius:8px;background:#fff;color:#333;border:none;cursor:pointer;font-size:12px" onclick="reuploadImage('+S.viewerId+');closeViewer()">差替</button>'
       +'</div></div></div>';
     }
-  }
-
-  // PDF MULTI-PAGE VIEWER MODAL
-  if(S.pdfViewerDoc){
-    h+='<div class="modal-bg" style="background:rgba(0,0,0,0.92);z-index:1001;padding:0;display:flex;align-items:center;justify-content:center" onclick="closePdfViewer()">';
-    h+='<div id="pdfViewerContainer" style="position:relative;width:100vw;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center" onclick="event.stopPropagation()">';
-    h+='<div style="position:absolute;top:12px;left:20px;color:#fff;font-size:13px;z-index:10;background:rgba(0,0,0,0.5);padding:6px 12px;border-radius:6px;max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📄 '+esc(S.pdfViewerName)+'<span style="margin-left:12px;font-size:11px;opacity:0.7">'+S.pdfViewerPage+' / '+S.pdfViewerTotal+' ページ</span></div>';
-    h+='<button onclick="closePdfViewer()" style="position:absolute;top:10px;right:20px;background:rgba(0,0,0,0.5);border:none;color:#fff;font-size:28px;cursor:pointer;width:40px;height:40px;border-radius:50%;z-index:10">&times;</button>';
-    h+='<div style="flex:1;width:100%;display:flex;align-items:center;justify-content:center;overflow:auto;padding:60px 20px 100px"><canvas id="pdfViewerCanvas" style="background:#fff;box-shadow:0 4px 24px rgba(0,0,0,0.5);border-radius:4px"></canvas></div>';
-    // Navigation bar
-    h+='<div style="position:absolute;bottom:16px;left:50%;transform:translateX(-50%);display:flex;gap:10px;align-items:center;background:rgba(0,0,0,0.5);padding:8px;border-radius:12px">';
-    h+='<button onclick="pdfViewerGoTo(1)" '+(S.pdfViewerPage<=1?'disabled':'')+' style="padding:8px 12px;border-radius:6px;background:#fff;color:#333;border:none;cursor:pointer;font-size:12px;opacity:'+(S.pdfViewerPage<=1?'0.3':'1')+'">⏮ 最初</button>';
-    h+='<button onclick="pdfViewerGoTo('+(S.pdfViewerPage-1)+')" '+(S.pdfViewerPage<=1?'disabled':'')+' style="padding:8px 12px;border-radius:6px;background:#fff;color:#333;border:none;cursor:pointer;font-size:12px;opacity:'+(S.pdfViewerPage<=1?'0.3':'1')+'">◀ 前</button>';
-    h+='<div style="color:#fff;font-size:13px;padding:0 8px;font-weight:600">'+S.pdfViewerPage+' / '+S.pdfViewerTotal+'</div>';
-    h+='<button onclick="pdfViewerGoTo('+(S.pdfViewerPage+1)+')" '+(S.pdfViewerPage>=S.pdfViewerTotal?'disabled':'')+' style="padding:8px 12px;border-radius:6px;background:#fff;color:#333;border:none;cursor:pointer;font-size:12px;opacity:'+(S.pdfViewerPage>=S.pdfViewerTotal?'0.3':'1')+'">次 ▶</button>';
-    h+='<button onclick="pdfViewerGoTo('+S.pdfViewerTotal+')" '+(S.pdfViewerPage>=S.pdfViewerTotal?'disabled':'')+' style="padding:8px 12px;border-radius:6px;background:#fff;color:#333;border:none;cursor:pointer;font-size:12px;opacity:'+(S.pdfViewerPage>=S.pdfViewerTotal?'0.3':'1')+'">最後 ⏭</button>';
-    h+='<div style="width:1px;height:24px;background:rgba(255,255,255,0.3);margin:0 4px"></div>';
-    h+='<button onclick="downloadPdfViewer()" style="padding:8px 16px;border-radius:6px;background:#0066CC;color:#fff;border:none;cursor:pointer;font-size:12px">📥 ダウンロード</button>';
-    h+='</div>';
-    h+='</div></div>';
   }
 
   // BULK REGISTER MODAL
@@ -1825,9 +1785,10 @@ function startQRScanner(){
     alert('QRスキャナーライブラリが読み込まれていません。\nインターネット接続を確認してください。');
     return;
   }
+  if(html5QrCode){html5QrCode.stop().catch(function(){});html5QrCode=null;}
   S.qrOpen=true;
   render();
-  setTimeout(function(){
+  requestAnimationFrame(function(){
     try{
       html5QrCode=new Html5Qrcode('qr-reader');
       var config={fps:10,qrbox:{width:250,height:250}};
@@ -1847,7 +1808,7 @@ function startQRScanner(){
       alert('スキャナー初期化エラー: '+e.message);
       closeScannerModal();
     }
-  },200);
+  });
 }
 
 function stopQRScanner(){
@@ -1871,26 +1832,31 @@ function closeScannerModal(){
 }
 
 function handleQRResult(text){
-  // 1. Try to extract drawing number from URL with base64 data
   var drawingNumber='';
+  // 1. Try to extract drawing number from URL with base64 data (?data=)
   var urlMatch=text.match(/[?&]data=([^&]+)/);
   if(urlMatch){
     try{
-      var decoded=JSON.parse(atob(decodeURIComponent(urlMatch[1])));
+      var decoded=JSON.parse(decodeURIComponent(atob(urlMatch[1])));
       if(decoded.number)drawingNumber=decoded.number;
     }catch(e){}
   }
-  // 2. Try 図番: prefix
+  // 2. Try URL with ?id= (generated by getQRContentShort)
+  if(!drawingNumber){
+    var idMatch=text.match(/[?&]id=([^&]+)/);
+    if(idMatch)drawingNumber=decodeURIComponent(idMatch[1]);
+  }
+  // 3. Try 図番: prefix
   if(!drawingNumber){
     var numMatch=text.match(/図番[:：]\s*([^\s\n]+)/);
     if(numMatch)drawingNumber=numMatch[1];
   }
-  // 3. Try DWG- pattern
+  // 4. Try DWG- pattern
   if(!drawingNumber){
     var dwgMatch=text.match(/DWG-\d+/i);
     if(dwgMatch)drawingNumber=dwgMatch[0];
   }
-  // 4. Fallback: use whole text
+  // 5. Fallback: use whole text
   if(!drawingNumber)drawingNumber=text.trim();
 
   // Search: exact match first
@@ -1908,6 +1874,22 @@ function handleQRResult(text){
     S.tab='list';S.search=drawingNumber;render();
     setTimeout(function(){alert('該当する図面が見つかりませんでした:\n"'+drawingNumber+'"\n\n検索ボックスに文字を入力しました。')},100);
   }
+}
+
+// URLパラメータ（?id= / ?data=）から図面を自動オープン（スマホでQR読取時）
+var _urlOpenDone=false;
+function checkUrlAndOpen(){
+  if(_urlOpenDone||!window.location.search)return;
+  _urlOpenDone=true;
+  var search=window.location.search;
+  var drawingNumber='';
+  var urlMatch=search.match(/[?&]data=([^&]+)/);
+  if(urlMatch){try{var decoded=JSON.parse(decodeURIComponent(atob(urlMatch[1])));if(decoded.number)drawingNumber=decoded.number;}catch(e){}}
+  if(!drawingNumber){var idMatch=search.match(/[?&]id=([^&]+)/);if(idMatch)drawingNumber=decodeURIComponent(idMatch[1]);}
+  if(!drawingNumber)return;
+  var found=DRAWINGS.find(function(d){return d.number===drawingNumber;});
+  if(!found)found=DRAWINGS.find(function(d){return drawingNumber.indexOf(d.number)>=0||d.number.indexOf(drawingNumber)>=0;});
+  if(found)renderQRMobileCard(found);
 }
 
 function selAnno(id){
@@ -2238,7 +2220,7 @@ function parseOCR(t){
 
   return f;
 }
-function saveDwg(){var num=document.getElementById('rN').value.trim(),nm=document.getElementById('rNm').value.trim();if(!num||!nm){alert('図面番号と名称は必須');return}var id=nextId++;var cl=document.getElementById('rCl').value.trim()||'未指定';DRAWINGS.unshift({id:id,number:num,name:nm,cat:document.getElementById('rC').value,mat:document.getElementById('rM').value.trim()||'未指定',size:document.getElementById('rSz').value.trim()||'未指定',client:cl,price:parseInt(document.getElementById('rPr').value)||0,date:new Date().toISOString().slice(0,10),tags:(document.getElementById('rTg').value||'').split(/[,、]/).map(function(t){return t.trim()}).filter(Boolean),shape:document.getElementById('rSh').value,status:'検図中',priority:'中',scanned:true,isPdf:S.regIsPdf});if(S.regPrev){scannedImages[id]=S.regPrev;if(S.regBlobUrl)scannedBlobUrls[id]=S.regBlobUrl;if(S.regIsPdf)scannedPdfs[id]=true}S.regOpen=false;S.tab='list';S.fcat='すべて';S.search='';saveAll();render()}
+function saveDwg(){var num=document.getElementById('rN').value.trim(),nm=document.getElementById('rNm').value.trim();if(!num||!nm){alert('図面番号と名称は必須');return}var id=nextId++;var cl=document.getElementById('rCl').value.trim()||'未指定';DRAWINGS.unshift({id:id,number:num,name:nm,cat:document.getElementById('rC').value,mat:document.getElementById('rM').value.trim()||'未指定',size:document.getElementById('rSz').value.trim()||'未指定',client:cl,price:parseInt(document.getElementById('rPr').value)||0,date:new Date().toISOString().slice(0,10),tags:(document.getElementById('rTg').value||'').split(/[,、]/).map(function(t){return t.trim()}).filter(Boolean),shape:document.getElementById('rSh').value,status:document.getElementById('rSt').value,priority:document.getElementById('rPri').value,scanned:true,isPdf:S.regIsPdf});if(S.regPrev){scannedImages[id]=S.regPrev;if(S.regBlobUrl)scannedBlobUrls[id]=S.regBlobUrl;if(S.regIsPdf)scannedPdfs[id]=true}S.regOpen=false;S.tab='list';S.fcat='すべて';S.search='';saveAll();render()}
 function genInvoice(){
   var s=document.getElementById('invSel');
   var selId=s?s.value:'';
@@ -2443,244 +2425,6 @@ function clearServerUrl(){
   SERVER_URL='';saveAll();render();
 }
 
-function saveGoogleDriveUrl(){
-  var input=document.getElementById('googleDriveUrlInput');
-  if(!input)return;
-  GOOGLE_DRIVE_URL=input.value.trim();
-  saveAll();render();
-  if(GOOGLE_DRIVE_URL)alert('共有フォルダURL保存: '+GOOGLE_DRIVE_URL);
-}
-
-function clearGoogleDriveUrl(){
-  GOOGLE_DRIVE_URL='';saveAll();render();
-}
-
-function openSharedFolder(){
-  if(!GOOGLE_DRIVE_URL){alert('共有フォルダURLが未設定です。マスター管理で登録してください。');return}
-  window.open(GOOGLE_DRIVE_URL,'_blank');
-}
-
-function editDrawingGDriveUrl(id){
-  var d=DRAWINGS.find(function(x){return x.id===id});
-  if(!d)return;
-  var current=d.gdriveUrl||'';
-  var url=prompt('この図面のGoogleドライブURL：\n（Googleドライブで該当ファイルを右クリック→共有→リンクをコピー）\n\n解除する場合は空のままOKを押してください',current);
-  if(url===null)return; // キャンセル
-  d.gdriveUrl=url.trim();
-  if(!d.gdriveUrl)delete d.gdriveUrl;
-  saveAll();render();
-}
-
-function openDrawingGDrive(id){
-  var d=DRAWINGS.find(function(x){return x.id===id});
-  if(!d||!d.gdriveUrl)return;
-  window.open(d.gdriveUrl,'_blank');
-}
-
-// === Drawing Folder (File System Access API) ===
-async function pickDrawingFolder(){
-  if(!window.showDirectoryPicker){
-    alert('このブラウザはフォルダ選択機能に対応していません。\nChrome または Edge を使用してください。');
-    return;
-  }
-  try{
-    var handle=await window.showDirectoryPicker({mode:'readwrite'});
-    drawingFolderHandle=handle;
-    drawingFolderName=handle.name;
-    // Save handle to IndexedDB for persistence
-    dbPut('meta','folderHandle',handle);
-    dbPut('meta','folderName',handle.name);
-    render();
-    alert('フォルダを選択しました: '+handle.name+'\n\n今後、図面登録時にこのフォルダのファイルにリンクを張れます。');
-  }catch(e){
-    if(e.name!=='AbortError')alert('フォルダ選択エラー: '+e.message);
-  }
-}
-
-function clearDrawingFolder(){
-  if(!confirm('フォルダ連携を解除しますか？\n既存の図面のリンクは残りますが、新規リンクができなくなります。'))return;
-  drawingFolderHandle=null;
-  drawingFolderName='';
-  dbDel('meta','folderHandle');
-  dbDel('meta','folderName');
-  render();
-}
-
-async function linkDrawingFile(drawingId){
-  if(!drawingFolderHandle){
-    if(confirm('まずマスター管理でフォルダを選択してください。\nマスター管理画面に移動しますか？')){
-      S.tab='master';render();
-    }
-    return;
-  }
-  try{
-    var perm=await drawingFolderHandle.queryPermission({mode:'readwrite'});
-    if(perm!=='granted'){
-      perm=await drawingFolderHandle.requestPermission({mode:'readwrite'});
-      if(perm!=='granted'){alert('フォルダへのアクセスが許可されませんでした');return}
-    }
-  }catch(e){alert('権限エラー: '+e.message);return}
-  
-  var input=document.createElement('input');
-  input.type='file';
-  input.accept='application/pdf,image/*';
-  input.multiple=true;
-  input.onchange=function(e){
-    var files=Array.from(e.target.files);
-    if(files.length===0)return;
-    var d=DRAWINGS.find(function(x){return x.id===drawingId});
-    if(!d)return;
-    if(!d.fileLinks)d.fileLinks=[];
-    if(d.fileLink&&d.fileLinks.indexOf(d.fileLink)<0){
-      d.fileLinks.push(d.fileLink);
-      delete d.fileLink;
-    }
-    var added=0;
-    files.forEach(function(file){
-      if(d.fileLinks.indexOf(file.name)<0){
-        d.fileLinks.push(file.name);
-        added++;
-      }
-    });
-    saveAll();render();
-    alert(added+'件のファイルをリンクしました。\n合計: '+d.fileLinks.length+'件');
-  };
-  input.click();
-}
-
-async function openLinkedFile(drawingId,fileName){
-  var d=DRAWINGS.find(function(x){return x.id===drawingId});
-  if(!d){alert('図面が見つかりません');return}
-  var name=fileName||d.fileLink||(d.fileLinks&&d.fileLinks[0]);
-  if(!name){alert('リンクされた図面ファイルがありません');return}
-  if(!drawingFolderHandle){alert('図面フォルダが未選択です。マスター管理で選択してください。');return}
-  try{
-    var perm=await drawingFolderHandle.queryPermission({mode:'read'});
-    if(perm!=='granted'){
-      perm=await drawingFolderHandle.requestPermission({mode:'read'});
-      if(perm!=='granted'){alert('フォルダへのアクセスが許可されませんでした');return}
-    }
-    var fileHandle=await drawingFolderHandle.getFileHandle(name);
-    var file=await fileHandle.getFile();
-    // PDF -> open in custom multi-page viewer
-    if(file.type==='application/pdf'||name.toLowerCase().endsWith('.pdf')){
-      openPdfViewer(file,name);
-    }else{
-      // Image -> open in new tab
-      var url=URL.createObjectURL(file);
-      window.open(url,'_blank');
-      setTimeout(function(){URL.revokeObjectURL(url)},60000);
-    }
-  }catch(e){
-    if(e.name==='NotFoundError'){
-      alert('ファイルが見つかりません: '+name);
-    }else{
-      alert('ファイルを開けません: '+e.message);
-    }
-  }
-}
-
-// Multi-page PDF viewer
-async function openPdfViewer(file,name){
-  if(typeof pdfjsLib==='undefined'){
-    alert('PDF読込ライブラリが使えません');return;
-  }
-  try{
-    var arr=await file.arrayBuffer();
-    var pdf=await pdfjsLib.getDocument({data:arr}).promise;
-    S.pdfViewerDoc=pdf;
-    S.pdfViewerTotal=pdf.numPages;
-    S.pdfViewerPage=1;
-    S.pdfViewerName=name;
-    S.pdfViewerFile=file;
-    render();
-    setTimeout(function(){renderPdfViewerPage()},100);
-  }catch(e){
-    alert('PDFを開けません: '+e.message);
-  }
-}
-
-function renderPdfViewerPage(){
-  if(!S.pdfViewerDoc)return;
-  var canvas=document.getElementById('pdfViewerCanvas');
-  if(!canvas)return;
-  S.pdfViewerDoc.getPage(S.pdfViewerPage).then(function(page){
-    var vp=page.getViewport({scale:1});
-    var container=document.getElementById('pdfViewerContainer');
-    var maxW=container?container.clientWidth-40:1200;
-    var maxH=window.innerHeight-200;
-    var scale=Math.min(maxW/vp.width,maxH/vp.height)*2;// 2x for high DPI
-    if(scale<1)scale=1;
-    var viewport=page.getViewport({scale:scale});
-    canvas.width=viewport.width;
-    canvas.height=viewport.height;
-    canvas.style.width=(viewport.width/2)+'px';
-    canvas.style.height=(viewport.height/2)+'px';
-    page.render({canvasContext:canvas.getContext('2d'),viewport:viewport});
-  }).catch(function(e){console.error('PDF render error:',e)});
-}
-
-function pdfViewerGoTo(page){
-  if(!S.pdfViewerDoc)return;
-  if(page<1||page>S.pdfViewerTotal)return;
-  S.pdfViewerPage=page;
-  render();
-  setTimeout(function(){renderPdfViewerPage()},50);
-}
-
-function closePdfViewer(){
-  S.pdfViewerDoc=null;
-  S.pdfViewerTotal=0;
-  S.pdfViewerPage=1;
-  S.pdfViewerName='';
-  S.pdfViewerFile=null;
-  render();
-}
-
-function downloadPdfViewer(){
-  if(!S.pdfViewerFile)return;
-  var url=URL.createObjectURL(S.pdfViewerFile);
-  var a=document.createElement('a');
-  a.href=url;
-  a.download=S.pdfViewerName||'drawing.pdf';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(function(){URL.revokeObjectURL(url)},1000);
-}
-
-function unlinkDrawingFile(drawingId,fileName){
-  var d=DRAWINGS.find(function(x){return x.id===drawingId});
-  if(!d)return;
-  if(!confirm('このリンクを解除しますか？\n（ファイル自体は削除されません）\n\n'+fileName))return;
-  if(d.fileLinks)d.fileLinks=d.fileLinks.filter(function(n){return n!==fileName});
-  if(d.fileLink===fileName)delete d.fileLink;
-  saveAll();render();
-}
-
-// Helper: render linked files HTML for detail panel
-function renderLinkedFilesHTML(d){
-  if(!drawingFolderName)return '';
-  var links=d.fileLinks||(d.fileLink?[d.fileLink]:[]);
-  var h='<div style="background:var(--bg2);border-radius:var(--r);padding:14px;margin-bottom:16px">';
-  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-size:12px;font-weight:700;color:var(--tx);display:flex;align-items:center;gap:6px">🔗 関連図面ファイル<span style="font-weight:400;color:var(--tx3);font-size:11px">('+links.length+'件)</span></div><button class="g-btn" style="padding:4px 10px;font-size:11px" onclick="linkDrawingFile('+d.id+')">+ 追加</button></div>';
-  if(links.length===0){
-    h+='<div style="font-size:11px;color:var(--tx3);text-align:center;padding:8px">リンクされた図面ファイルなし</div>';
-  }else{
-    h+='<div style="display:flex;flex-direction:column;gap:6px">';
-    links.forEach(function(fn){
-      var safeName=fn.replace(/'/g,"\\'").replace(/"/g,'&quot;');
-      var isPdf=fn.toLowerCase().endsWith('.pdf');
-      var iconColor=isPdf?'#C03030':'var(--ac)';
-      var typeLabel=isPdf?'<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:#FFE5E5;color:#C03030;margin-left:6px;font-weight:600">PDF</span>':'';
-      h+='<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--bd);border-radius:8px;font-size:11px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="'+iconColor+'" stroke-width="1.5" style="flex-shrink:0"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><div style="flex:1;min-width:0;display:flex;align-items:center;overflow:hidden"><span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(fn)+'">'+esc(fn)+'</span>'+typeLabel+'</div><button class="g-btn" style="padding:3px 8px;font-size:10px" onclick="openLinkedFile('+d.id+',\''+safeName+'\')">'+(isPdf?'📖 ページ閲覧':'開く')+'</button><button style="padding:3px 8px;font-size:10px;border-radius:5px;border:none;background:var(--rd2);color:var(--rd);cursor:pointer" onclick="unlinkDrawingFile('+d.id+',\''+safeName+'\')">×</button></div>';
-    });
-    h+='</div>';
-  }
-  h+='</div>';
-  return h;
-}
-
 function importMastersFromDrawings(){
   var added={categories:0,materials:0,clients:0};
   DRAWINGS.forEach(function(d){
@@ -2753,6 +2497,40 @@ function genQRImage(id){
   render();
 }
 
+function renderQRMobileCard(d){
+  var ex=function(x){return String(x||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;')};
+  var stColor={'検図中':'#185FA5','見積済':'#B06E15','製造中':'#6C63FF','納品済':'#1B8C65'}[d.status]||'#86868b';
+  var stBg={'検図中':'#E6F1FB','見積済':'#FDF3E0','製造中':'#EEEDFE','納品済':'#E8F5EE'}[d.status]||'#f5f5f7';
+  function row(lbl,val){return '<div style="background:#f5f5f7;border-radius:10px;padding:12px"><div style="font-size:10px;color:#86868b;margin-bottom:2px">'+lbl+'</div><div style="font-size:14px;font-weight:600;color:#1d1d1f">'+ex(String(val||'—'))+'</div></div>';}
+  document.title=d.number+' — '+ex(d.name);
+  document.getElementById('app').innerHTML=
+    '<div style="min-height:100vh;background:#f5f5f7;font-family:\'Noto Sans JP\',sans-serif;padding:20px 16px 40px">'+
+    '<div style="max-width:480px;margin:0 auto">'+
+    '<div style="font-size:11px;color:#86868b;margin-bottom:16px;text-align:center;letter-spacing:.05em">図面情報カード</div>'+
+    '<div style="background:#fff;border-radius:16px;padding:24px;box-shadow:0 2px 20px rgba(0,0,0,.1)">'+
+    '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px">'+
+    '<div style="flex:1;min-width:0">'+
+    '<div style="font-size:20px;font-weight:700;color:#1d1d1f;line-height:1.3">'+ex(d.name)+'</div>'+
+    '<div style="font-size:13px;color:#86868b;margin-top:4px">'+ex(d.number)+'</div>'+
+    '</div>'+
+    '<div style="flex-shrink:0;margin-left:12px;padding:5px 14px;border-radius:20px;font-size:12px;font-weight:600;background:'+stBg+';color:'+stColor+'">'+ex(d.status)+'</div>'+
+    '</div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
+    row('材質',d.mat)+row('サイズ',d.size)+row('カテゴリ',d.cat)+row('取引先',d.client)+
+    row('単価','¥'+(d.price||0).toLocaleString())+row('登録日',d.date)+
+    '</div>'+
+    ((d.tags&&d.tags.length)?
+      '<div style="margin-top:16px;display:flex;flex-wrap:wrap;gap:6px">'+
+      d.tags.map(function(t){return '<span style="padding:3px 10px;border-radius:12px;font-size:11px;background:#f0f0f5;color:#6e6e73">'+ex(t)+'</span>'}).join('')+
+      '</div>':'')+
+    '</div>'+
+    '<div style="margin-top:12px;text-align:center">'+
+    '<a href="'+window.location.pathname+'" style="font-size:12px;color:#0066CC;text-decoration:none">管理アプリを開く →</a>'+
+    '</div>'+
+    '</div></div>';
+  window._qrViewer=true;
+}
+
 function getQRContent(d){
   if(SERVER_URL){
     var json=JSON.stringify({number:d.number,name:d.name,cat:d.cat,mat:d.mat,size:d.size,client:d.client,price:d.price,status:d.status,date:d.date,tags:d.tags});
@@ -2774,7 +2552,8 @@ function getQRContent(d){
 
 function getQRContentShort(d){
   if(SERVER_URL){
-    return SERVER_URL+'?id='+encodeURIComponent(d.number);
+    var json=JSON.stringify({number:d.number,name:d.name,cat:d.cat,mat:d.mat,size:d.size,client:d.client,price:d.price,status:d.status,date:d.date,tags:d.tags});
+    return SERVER_URL+'?data='+btoa(encodeURIComponent(json));
   }
   return d.number+' '+d.name+' '+d.mat+' '+d.size;
 }
@@ -3117,7 +2896,7 @@ function printHTML(html){
   },300);
 }
 
-render();
+if(!window._qrViewer)render();
 </script>
 </body>
 </html>
