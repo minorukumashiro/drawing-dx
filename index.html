@@ -2597,9 +2597,7 @@ function renderQRMobileCard(d){
 
 function getQRContent(d){
   if(SERVER_URL){
-    var json=JSON.stringify({number:d.number,name:d.name,cat:d.cat,mat:d.mat,size:d.size,client:d.client,price:d.price,status:d.status,date:d.date,tags:d.tags});
-    var b64=btoa(encodeURIComponent(json));
-    return SERVER_URL+'?data='+b64;
+    return SERVER_URL+'?id='+encodeURIComponent(d.number);
   }
   // No server: short plain text (proven to work with Google Lens)
   var lines=[];
@@ -2616,9 +2614,7 @@ function getQRContent(d){
 
 function getQRContentShort(d){
   if(SERVER_URL){
-    // 短縮フィールド名でJSONを小さくしてQRコードの密度を下げる
-    var obj={n:d.number,nm:d.name,c:d.cat,m:d.mat,sz:d.size,cl:d.client,p:d.price,st:d.status,dt:d.date,t:d.tags};
-    try{return SERVER_URL+'?data='+btoa(unescape(encodeURIComponent(JSON.stringify(obj))));}catch(ex){}
+    return SERVER_URL+'?id='+encodeURIComponent(d.number);
   }
   return d.number+' '+d.name+' '+d.mat+' '+d.size;
 }
