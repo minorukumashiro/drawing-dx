@@ -2233,7 +2233,7 @@ function genInvoice(){
   saveAll();render();
 }
 
-function openViewer(id){S.viewerId=id;render()}
+function openViewer(id){if(isMobileDevice()){downloadDrawingFile(id);return;}S.viewerId=id;render()}
 function closeViewer(){S.viewerId=null;render()}
 function toggleViewerZoom(img){
   if(img.dataset.zoomed==='1'){
