@@ -1797,39 +1797,45 @@ function loadImageForPdf(src){
   });
 }
 
-// Mobile QR: file input → jsQR decode
+// Mobile QR: file input → BarcodeDetector (iOS17+) or jsQR fallback
 function handleQRFileInput(e){
   var file=e.target.files[0];if(!file)return;
   e.target.value='';
+  // BarcodeDetector: iOS17+ / Chrome対応、精度が高い
+  if(window.BarcodeDetector){
+    try{
+      var det=new window.BarcodeDetector({formats:['qr_code']});
+      det.detect(file).then(function(codes){
+        if(codes&&codes.length>0){handleQRResult(codes[0].rawValue);}
+        else{_jsQRDecode(file);}
+      }).catch(function(){_jsQRDecode(file);});
+      return;
+    }catch(ex){}
+  }
+  _jsQRDecode(file);
+}
+function _jsQRDecode(file){
+  if(typeof jsQR==='undefined'){alert('QRデコードライブラリが読み込まれていません');return;}
   var reader=new FileReader();
   reader.onload=function(ev){
     var img=new Image();
     img.onload=function(){
-      if(typeof jsQR==='undefined'){alert('jsQRライブラリが読み込まれていません');return;}
-      // スマホ高解像度写真を縮小してjsQRに渡す（大きすぎると処理失敗）
-      var MAX=1024;
-      var scale=Math.min(1,MAX/Math.max(img.width,img.height));
-      var w=Math.round(img.width*scale),h=Math.round(img.height*scale);
-      var canvas=document.createElement('canvas');
-      canvas.width=w;canvas.height=h;
-      var ctx=canvas.getContext('2d');
-      ctx.drawImage(img,0,0,w,h);
-      var imageData=ctx.getImageData(0,0,w,h);
-      var code=jsQR(imageData.data,w,h,{inversionAttempts:'dontInvert'});
-      // 読み取れない場合は少し大きくして再試行
-      if(!code){
-        var w2=Math.round(img.width*Math.min(1,1600/Math.max(img.width,img.height)));
-        var h2=Math.round(img.height*Math.min(1,1600/Math.max(img.width,img.height)));
-        var c2=document.createElement('canvas');c2.width=w2;c2.height=h2;
-        c2.getContext('2d').drawImage(img,0,0,w2,h2);
-        code=jsQR(c2.getContext('2d').getImageData(0,0,w2,h2).data,w2,h2,{inversionAttempts:'attemptBoth'});
-      }
-      if(code){handleQRResult(code.data);}
-      else{alert('QRコードを読み取れませんでした。\nQRコードを画面いっぱいに大きく写して再撮影してください。');}
+      var found=_tryJsQR(img,1024)||_tryJsQR(img,1600)||_tryJsQR(img,800);
+      if(found){handleQRResult(found);}
+      else{alert('QRコードを読み取れませんでした。\nQRコードを画面中央に大きく写して再撮影してください。');}
     };
     img.src=ev.target.result;
   };
   reader.readAsDataURL(file);
+}
+function _tryJsQR(img,maxPx){
+  var scale=Math.min(1,maxPx/Math.max(img.width,img.height));
+  var w=Math.round(img.width*scale),h=Math.round(img.height*scale);
+  var cv=document.createElement('canvas');cv.width=w;cv.height=h;
+  cv.getContext('2d').drawImage(img,0,0,w,h);
+  var d=cv.getContext('2d').getImageData(0,0,w,h);
+  var r=jsQR(d.data,w,h,{inversionAttempts:'attemptBoth'});
+  return r?r.data:null;
 }
 
 // Desktop QR Scanner (live camera)
@@ -1891,9 +1897,14 @@ function handleQRResult(text){
   var urlMatch=text.match(/[?&]data=([^&]+)/);
   if(urlMatch){
     try{
-      var decoded=JSON.parse(decodeURIComponent(atob(urlMatch[1])));
+      var raw=urlMatch[1];
+      // 旧形式: decodeURIComponent(atob()) / 新形式: decodeURIComponent(escape(atob()))
+      var jsonStr;
+      try{jsonStr=decodeURIComponent(escape(atob(raw)));}catch(e2){jsonStr=decodeURIComponent(atob(raw));}
+      var decoded=JSON.parse(jsonStr);
+      // 短縮フィールド名を展開
+      if(decoded.n)decoded={number:decoded.n,name:decoded.nm,cat:decoded.c,mat:decoded.m,size:decoded.sz,client:decoded.cl,price:decoded.p,status:decoded.st,date:decoded.dt,tags:decoded.t||[]};
       if(decoded&&decoded.number){
-        // Also try to find in local DB for richer data
         var local=DRAWINGS.find(function(d){return d.number===decoded.number});
         S.qrResult=local||decoded;render();return;
       }
@@ -2605,8 +2616,9 @@ function getQRContent(d){
 
 function getQRContentShort(d){
   if(SERVER_URL){
-    var json=JSON.stringify({number:d.number,name:d.name,cat:d.cat,mat:d.mat,size:d.size,client:d.client,price:d.price,status:d.status,date:d.date,tags:d.tags});
-    return SERVER_URL+'?data='+btoa(encodeURIComponent(json));
+    // 短縮フィールド名でJSONを小さくしてQRコードの密度を下げる
+    var obj={n:d.number,nm:d.name,c:d.cat,m:d.mat,sz:d.size,cl:d.client,p:d.price,st:d.status,dt:d.date,t:d.tags};
+    try{return SERVER_URL+'?data='+btoa(unescape(encodeURIComponent(JSON.stringify(obj))));}catch(ex){}
   }
   return d.number+' '+d.name+' '+d.mat+' '+d.size;
 }
