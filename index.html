@@ -8,6 +8,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <!-- jsPDF for exporting drawings as PDF -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <!-- Firebase SDK (v10 compat for global window usage) -->
@@ -857,6 +858,7 @@ function render(){
   if(!_mobile){
     h+='<button class="nav-tab" style="background:var(--ac);color:#fff;font-weight:600" onclick="openRegister()">+ 図面登録</button>';
     h+='<button class="nav-tab" style="background:#6E47A6;color:#fff;font-weight:600" onclick="openBulkRegister()">📚 一括登録</button>';
+    h+='<label for="alritZipInput" class="nav-tab" style="background:#0E7490;color:#fff;font-weight:600;cursor:pointer">☁ ALRITインポート</label><input type="file" id="alritZipInput" accept=".zip" style="display:none" onchange="importAlritZip(event)">';
   }
   h+='</div></div><div class="kpi-row">';
   // Storage usage
@@ -1988,6 +1990,79 @@ function saveCurrentAnnotations(){
   saveAll();
 }
 function openRegister(){S.regOpen=true;S.regPrev=null;S.regName='';S.regIsPdf=false;S.ocrSt='idle';S.ocrF={};render()}
+
+// === ALRIT ZIP IMPORT ===
+async function importAlritZip(e){
+  var file=e.target.files[0];
+  e.target.value='';
+  if(!file)return;
+  if(typeof JSZip==='undefined'){alert('JSZipライブラリが読み込まれていません。ページを再読み込みしてください。');return;}
+  var prog=document.createElement('div');
+  prog.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;padding:24px 32px;border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,0.3);z-index:9999;text-align:center;font-size:14px;min-width:280px';
+  prog.innerHTML='<div style="font-weight:600;margin-bottom:8px">☁ ZIPを読み込み中...</div><div id="alritProgStatus" style="font-size:12px;color:#666">準備中</div>';
+  document.body.appendChild(prog);
+  try{
+    var zip=await JSZip.loadAsync(file);
+    // drawingフォルダ内のPDF/画像を抽出（パス区切りに関係なく拡張子で判定）
+    var entries=[];
+    zip.forEach(function(relPath,entry){
+      if(entry.dir)return;
+      var lower=relPath.toLowerCase();
+      if(lower.endsWith('.pdf')||lower.endsWith('.jpg')||lower.endsWith('.jpeg')||lower.endsWith('.png')||lower.endsWith('.bmp')||lower.endsWith('.tif')||lower.endsWith('.tiff')){
+        entries.push({path:relPath,entry:entry});
+      }
+    });
+    if(entries.length===0){document.body.removeChild(prog);alert('ZIP内にPDF/画像ファイルが見つかりませんでした。\nALRITからダウンロードしたZIPを選択してください。');return;}
+    var st=document.getElementById('alritProgStatus');
+    if(st)st.textContent='0 / '+entries.length+' 件を読み込み中...';
+    // bulkItemsに変換
+    S.bulkItems=[];
+    S.bulkSelected=0;
+    for(var i=0;i<entries.length;i++){
+      var ent=entries[i];
+      if(st)st.textContent=(i+1)+' / '+entries.length+' — '+ent.path.split('/').pop();
+      var blob=await ent.entry.async('blob');
+      var lower=ent.path.toLowerCase();
+      var mimeType=lower.endsWith('.pdf')?'application/pdf':(lower.endsWith('.png')?'image/png':'image/jpeg');
+      // ファイル名をShift-JIS対応でデコード試みる
+      var rawName=ent.path.split('/').pop();
+      var fName=rawName;
+      var fObj=new File([blob],fName,{type:mimeType});
+      var isPdf=mimeType==='application/pdf';
+      // ファイル名から図番を推定（例: 03380-1525H など）
+      var numMatch=fName.match(/([A-Z0-9]+-[A-Z0-9]+)/i)||fName.match(/(\d{3,}[-_]\d+)/);
+      var guessedNumber=numMatch?numMatch[1]:'';
+      var item={
+        name:fName,
+        file:fObj,
+        preview:null,
+        loading:true,
+        checked:true,
+        number:guessedNumber,
+        itemName:fName.replace(/\.[^.]+$/,''),
+        client:'',
+        mat:'',
+        cat:'',
+        isPdf:isPdf
+      };
+      S.bulkItems.push(item);
+      if(i%3===2)await new Promise(function(r){setTimeout(r,10)});
+    }
+    S.bulkSelected=S.bulkItems.length;
+    document.body.removeChild(prog);
+    // 一括登録モーダルを開く
+    S.bulkOpen=true;
+    render();
+    // サムネイル非同期読込
+    for(var j=0;j<S.bulkItems.length;j++){
+      (function(idx){bulkLoadPreview(idx);})(j);
+    }
+    setTimeout(function(){alert(S.bulkItems.length+' 件のファイルを読み込みました。\n図番・品名を確認して「一括登録」を押してください。')},200);
+  }catch(err){
+    if(document.body.contains(prog))document.body.removeChild(prog);
+    alert('ZIPの読み込みに失敗しました:\n'+err.message);
+  }
+}
 
 // === BULK REGISTER ===
 function openBulkRegister(){
