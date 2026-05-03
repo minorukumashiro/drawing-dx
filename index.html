@@ -554,6 +554,7 @@ function fbStartListener(){
     // Merge: server data overwrites local
     if(data.drawings)DRAWINGS=data.drawings;
     if(data.masters)MASTERS=data.masters;
+    if(MASTERS.statuses&&MASTERS.statuses.indexOf('完了')<0){var _ni=MASTERS.statuses.indexOf('納品済');if(_ni>=0)MASTERS.statuses.splice(_ni,0,'完了');else MASTERS.statuses.push('完了');}
     if(data.inspections)inspectionReports=data.inspections;
     if(data.invoices)INVOICES=data.invoices;
     if(data.annotations)ANNOTATIONS=data.annotations;
@@ -893,7 +894,7 @@ function render(){
     var sortedClients=Object.keys(clients).sort(function(a,b){if(a==='未指定')return 1;if(b==='未指定')return -1;return a.localeCompare(b,'ja')});
     sortedClients.forEach(function(cl){
       var items=clients[cl];
-      h+='<div style="margin-bottom:20px"><div style="font-size:12px;font-weight:700;color:var(--tx2);padding:8px 14px;background:var(--bg3);border-radius:8px;margin-bottom:8px;display:flex;align-items:center;gap:6px">'+esc(cl)+'<span style="font-weight:400;color:var(--tx3);font-size:11px">('+items.length+'件)</span><button class="g-btn" style="margin-left:auto;padding:4px 10px;font-size:11px;background:var(--rd2);color:var(--rd)" onclick="exportClientPdf(\''+esc(cl).replace(/\\/g,'\\\\').replace(/'/g,"\\'")+'\')">📑 PDFまとめ</button></div>';
+      h+='<div style="margin-bottom:20px"><div style="font-size:12px;font-weight:700;color:var(--tx2);padding:8px 14px;background:var(--bg3);border-radius:8px;margin-bottom:8px;display:flex;align-items:center;gap:6px">'+esc(cl)+'<span style="font-weight:400;color:var(--tx3);font-size:11px">('+items.length+'件)</span>'+(!_mobile?'<button class="g-btn" style="margin-left:auto;padding:4px 10px;font-size:11px;background:var(--rd2);color:var(--rd)" onclick="exportClientPdf(\''+esc(cl).replace(/\\/g,'\\\\').replace(/'/g,"\\'")+'\')">📑 PDFまとめ</button>':'')+'</div>';
       h+='<div class="grid">';
       items.forEach(function(d){
         h+='<div class="g-card" draggable="true" ondragstart="event.dataTransfer.setData(\'text/plain\',\''+d.id+'\')" onclick="openDetail('+d.id+')">'
@@ -2268,28 +2269,29 @@ function downloadDrawingFile(id){
   var hasFile=scannedImages[id]||scannedBlobUrls[id]||scannedPdfs[id];
   if(!hasFile){alert('図面ファイルがありません');return}
   var isMobile=/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-  if(scannedPdfs[id]){
-    // PDF: convert to blob URL and open in new tab (works on mobile too)
+  // Resolve actual PDF data: scannedPdfs may be a data URL or just boolean true
+  var pdfSrc=typeof scannedPdfs[id]==='string'?scannedPdfs[id]:null;
+  // Fallback: scannedImages may hold PDF data for re-uploaded PDFs
+  if(!pdfSrc&&scannedImages[id]&&scannedImages[id].indexOf('application/pdf')>=0)pdfSrc=scannedImages[id];
+  if(pdfSrc){
+    // PDF: convert to blob URL and open
     try{
-      var raw=atob(scannedPdfs[id].split(',')[1]);
+      var raw=atob(pdfSrc.split(',')[1]);
       var arr=new Uint8Array(raw.length);for(var i=0;i<raw.length;i++)arr[i]=raw.charCodeAt(i);
       var blob=new Blob([arr],{type:'application/pdf'});
       var url=URL.createObjectURL(blob);
       if(isMobile){
-        // Mobile: open in new tab so it can be viewed/downloaded by browser
-        var win=window.open(url,'_blank');
-        if(!win){
-          // Popup blocked: navigate current tab instead
-          window.location.href=url;
-        }
-        setTimeout(function(){URL.revokeObjectURL(url)},120000);
+        // iOS Safari: navigate directly (window.open blocked without user gesture)
+        window.location.href=url;
       }else{
-        // Desktop: trigger download
         downloadDataURL(url,d.number+'_'+d.name+'.pdf');
       }
     }catch(e){
       alert('PDFを開けません: '+e.message);
     }
+  }else if(scannedPdfs[id]){
+    // PDF flag set but data not available on this device (large PDF, not synced)
+    alert('このPDFデータは登録したPCのみ保存されています。\nPCでQRコードを再生成してください。');
   }else{
     // Image
     var dataUrl=scannedImages[id]||scannedBlobUrls[id];
