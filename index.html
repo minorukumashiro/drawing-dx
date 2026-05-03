@@ -846,7 +846,12 @@ function render(){
   if(_mobile&&S.tab==='master')S.tab='board';
   var _tabs=_mobile?[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'}]:[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'},{k:'master',l:'マスター管理'}];
   _tabs.forEach(function(t){h+='<button class="nav-tab'+(S.tab===t.k?' active':'')+'" onclick="setTab(\''+t.k+'\')">'+t.l+'</button>'});
-  h+='<button class="nav-tab" style="background:var(--gn);color:#fff;font-weight:600;display:flex;align-items:center;gap:4px" onclick="startQRScanner()">📷 QRスキャン</button>';
+  if(_mobile){
+    h+='<label for="qrMobileInput" class="nav-tab" style="background:var(--gn);color:#fff;font-weight:600;display:flex;align-items:center;gap:4px;cursor:pointer">📷 QRスキャン</label>'
+      +'<input type="file" id="qrMobileInput" accept="image/*" capture="environment" style="display:none" onchange="handleQRFileInput(event)">';
+  }else{
+    h+='<button class="nav-tab" style="background:var(--gn);color:#fff;font-weight:600;display:flex;align-items:center;gap:4px" onclick="startQRScanner()">📷 QRスキャン</button>';
+  }
   var _ssc=(function(){var cm={connecting:'#0066CC',pushing:'#0066CC',synced:'#1B8C65',error:'#D70015',offline:'#86868b'};var tm={connecting:'⟳ 接続中...',pushing:'⟳ 同期中...',synced:'✓ 同期済',error:'⚠ 同期エラー',offline:'○ オフライン'};return{c:cm[fbSyncState]||'#86868b',t:tm[fbSyncState]||'○ オフライン'};})();
   h+='<div id="fbSyncStatus" style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;background:var(--bg2);color:'+_ssc.c+';white-space:nowrap" title="Firebase同期状態">'+_ssc.t+'</div>';
   if(!_mobile){
@@ -1792,35 +1797,31 @@ function loadImageForPdf(src){
   });
 }
 
-// QR Scanner
+// Mobile QR: file input → jsQR decode
+function handleQRFileInput(e){
+  var file=e.target.files[0];if(!file)return;
+  e.target.value=''; // reset so same QR can be re-scanned
+  var reader=new FileReader();
+  reader.onload=function(ev){
+    var img=new Image();
+    img.onload=function(){
+      var canvas=document.createElement('canvas');
+      canvas.width=img.width;canvas.height=img.height;
+      var ctx=canvas.getContext('2d');ctx.drawImage(img,0,0);
+      var imageData=ctx.getImageData(0,0,canvas.width,canvas.height);
+      if(typeof jsQR==='undefined'){alert('jsQRライブラリが読み込まれていません');return;}
+      var code=jsQR(imageData.data,imageData.width,imageData.height);
+      if(code){handleQRResult(code.data);}
+      else{alert('QRコードを読み取れませんでした。\nQRコードが画面に大きく写るよう撮影し直してください。');}
+    };
+    img.src=ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+// Desktop QR Scanner (live camera)
 var html5QrCode=null;
 function startQRScanner(){
-  if(isMobileDevice()){
-    // Mobile: use native camera photo → jsQR decode (100% iOS compatible)
-    var input=document.createElement('input');
-    input.type='file';input.accept='image/*';input.capture='environment';
-    input.onchange=function(e){
-      var file=e.target.files[0];if(!file)return;
-      var reader=new FileReader();
-      reader.onload=function(ev){
-        var img=new Image();
-        img.onload=function(){
-          var canvas=document.createElement('canvas');
-          canvas.width=img.width;canvas.height=img.height;
-          var ctx=canvas.getContext('2d');ctx.drawImage(img,0,0);
-          var imageData=ctx.getImageData(0,0,canvas.width,canvas.height);
-          if(typeof jsQR==='undefined'){alert('jsQRライブラリが読み込まれていません');return;}
-          var code=jsQR(imageData.data,imageData.width,imageData.height);
-          if(code){handleQRResult(code.data);}
-          else{alert('QRコードを読み取れませんでした。\nQRコードが枠内に収まるように撮影し直してください。');}
-        };
-        img.src=ev.target.result;
-      };
-      reader.readAsDataURL(file);
-    };
-    input.click();
-    return;
-  }
   // Desktop: live camera scanner
   if(typeof Html5Qrcode==='undefined'){
     alert('QRスキャナーライブラリが読み込まれていません。\nインターネット接続を確認してください。');
