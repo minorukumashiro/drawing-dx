@@ -2018,11 +2018,13 @@ async function importAlritZip(e){
         catch(e){try{return new TextDecoder('utf-8').decode(bytes);}catch(e2){return bytes.toString();}}
       }
     });
-    // drawingフォルダ内のPDF/画像を抽出（パス区切りに関係なく拡張子で判定）
+    // drawingフォルダ内のファイルのみ抽出
     var entries=[];
     zip.forEach(function(relPath,entry){
       if(entry.dir)return;
       var lower=relPath.toLowerCase();
+      // "drawing"フォルダ配下のみ対象
+      if(lower.indexOf('/drawing/')<0&&!lower.startsWith('drawing/'))return;
       if(lower.endsWith('.pdf')||lower.endsWith('.jpg')||lower.endsWith('.jpeg')||lower.endsWith('.png')||lower.endsWith('.bmp')||lower.endsWith('.tif')||lower.endsWith('.tiff')){
         entries.push({path:relPath,entry:entry});
       }
