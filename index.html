@@ -2054,7 +2054,8 @@ async function importAlritZip(e){
         mat:existingDup?existingDup.mat:'',
         cat:existingDup?existingDup.cat:'',
         isPdf:isPdf,
-        duplicate:!!existingDup
+        duplicate:!!existingDup,
+        status:'その他'
       };
       S.bulkItems.push(item);
       if(i%3===2)await new Promise(function(r){setTimeout(r,10)});
@@ -2310,7 +2311,7 @@ async function bulkSubmit(){
           date:new Date().toISOString().slice(0,10),
           tags:[],
           shape:'plate',
-          status:'検図中',
+          status:it.status||'検図中',
           priority:'中',
           scanned:true
         };
