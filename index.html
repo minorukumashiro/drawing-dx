@@ -412,8 +412,8 @@ function saveAll(){
   Object.keys(scannedImages).forEach(function(id){
     dbPut('images',String(id),scannedImages[id]);
   });
-  // Firebase sync (debounced)
-  if(fbEnabled&&!fbSyncing){
+  // Firebase sync (debounced) — always update timestamp so onSnapshot suppression works
+  if(fbEnabled){
     fbLastLocalChange=Date.now();
     clearTimeout(window._fbSyncTimer);
     window._fbSyncTimer=setTimeout(fbPushAll,1500);
@@ -551,8 +551,8 @@ function fbStartListener(){
     if(!doc.exists)return;
     var data=doc.data();
     if(!data)return;
-    // Ignore our own changes (within 3s of local save)
-    if(data.lastClient===fbClientId()&&Date.now()-fbLastLocalChange<3000)return;
+    // ローカル保存から5秒以内は自分の変更を上書きしない
+    if(Date.now()-fbLastLocalChange<5000)return;
     // Merge: server data overwrites local
     if(data.drawings)DRAWINGS=data.drawings;
     if(data.masters)MASTERS=data.masters;
