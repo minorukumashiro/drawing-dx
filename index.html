@@ -436,16 +436,20 @@ function fbPushAll(){
     lastModified:firebase.firestore.FieldValue.serverTimestamp(),
     lastClient:fbClientId()
   };
+  // DEBUG: show payload size
+  try{var _sz=JSON.stringify(payload).length;console.log('[SYNC] payload:',Math.round(_sz/1024),'KB, drawings:',DRAWINGS.length);if(_sz>900*1024){showDbg('⚠ データが大きすぎます('+Math.round(_sz/1024)+'KB) Firestore上限1MB');}}catch(e){}
   fbDB.collection('workspaces').doc('default').set(payload).then(function(){
     // After metadata, sync images (one document per drawing image)
     return fbPushImages();
   }).then(function(){
     fbSyncing=false;
     updateSyncStatus('synced');
+    console.log('[SYNC] push OK, client:',fbClientId());
   }).catch(function(e){
     fbSyncing=false;
     updateSyncStatus('error',e.message);
-    console.error('Firebase push failed:',e);
+    console.error('[SYNC] push FAILED:',e);
+    showDbg('同期エラー: '+e.message);
   });
 }
 
@@ -552,7 +556,9 @@ function fbStartListener(){
     var data=doc.data();
     if(!data)return;
     // 自分のエコーのみ抑制（他デバイスの変更は常に適用）
-    if(data.lastClient===fbClientId()&&Date.now()-fbLastLocalChange<3000)return;
+    var _isEcho=data.lastClient===fbClientId()&&Date.now()-fbLastLocalChange<3000;
+    console.log('[SNAP] from:',data.lastClient,'myId:',fbClientId(),'echo:',_isEcho);
+    if(_isEcho)return;
     // Merge: server data overwrites local
     if(data.drawings){DRAWINGS=data.drawings;DRAWINGS.forEach(function(d){if(d.status==='検図中')d.status='検討中';});}
     if(data.masters){MASTERS=data.masters;if(MASTERS.statuses){var idx=MASTERS.statuses.indexOf('検図中');if(idx>=0)MASTERS.statuses[idx]='検討中';}}
@@ -659,6 +665,13 @@ async function forceResyncImages(){
 }
 
 var fbSyncState='connecting';
+function showDbg(msg){
+  var el=document.createElement('div');
+  el.style.cssText='position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a1a1a;color:#ff6;padding:10px 16px;border-radius:8px;font-size:12px;z-index:9999;max-width:90vw;word-break:break-all;border:1px solid #555';
+  el.textContent=msg;
+  document.body.appendChild(el);
+  setTimeout(function(){if(el.parentNode)el.parentNode.removeChild(el);},8000);
+}
 function updateSyncStatus(state,msg){
   fbSyncState=state;
   var el=document.getElementById('fbSyncStatus');
@@ -2536,8 +2549,16 @@ function openMobileViewer(id){
     +'<span id="mvPageNum" style="color:#fff;font-size:14px;font-weight:600;min-width:80px;text-align:center">読込中...</span>'
     +'<button onclick="mobileViewerSetPage(mvCurPage+1)" style="padding:8px 22px;border-radius:8px;background:#333;color:#fff;border:none;font-size:20px;cursor:pointer">▶</button>'
     +'</div>':'')
-    +'<div id="mvContent" style="flex:1;overflow:auto;background:#333;display:flex;align-items:flex-start;justify-content:center;-webkit-overflow-scrolling:touch">'
-    +'<div style="color:#aaa;margin:auto;font-size:13px">読込中...</div>'
+    +'<div id="mvContent" style="flex:1;overflow:auto;background:#333;display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;-webkit-overflow-scrolling:touch">'
+    +'<div style="color:#aaa;padding:12px;font-size:11px;width:100%;box-sizing:border-box;background:#222;border-bottom:1px solid #444">'
+    +'🔍 DEBUG: id='+id
+    +' | imgs='+(scannedImages[id]?Math.round(scannedImages[id].length/1024)+'KB':'なし')
+    +' | pdf='+(scannedPdfs[id]?Math.round((typeof scannedPdfs[id]==='string'?scannedPdfs[id].length:0)/1024)+'KB':'なし')
+    +' | thumb='+(pdfThumbnails[id]?Math.round(pdfThumbnails[id].length/1024)+'KB':'なし')
+    +' | pdfjs='+(typeof pdfjsLib!=='undefined'?'OK':'NG')
+    +' | pdfSrc='+(pdfSrc?Math.round(pdfSrc.length/1024)+'KB':'なし')
+    +'</div>'
+    +'<div id="mvLoading" style="color:#aaa;margin:auto;font-size:13px;padding:20px">読込中...</div>'
     +'</div>'
     +(pdfSrc?'<div id="mvStrip" style="display:flex;gap:6px;overflow-x:auto;padding:8px 12px;background:#1a1a1a;flex-shrink:0;min-height:96px;-webkit-overflow-scrolling:touch"></div>':'');
   document.body.appendChild(ov);
@@ -2547,19 +2568,26 @@ function openMobileViewer(id){
       pdfjsLib.getDocument({data:arr}).promise.then(function(pdf){
         mvPdfDoc=pdf;mvCurPage=1;
         var numEl=document.getElementById('mvPageNum');if(numEl)numEl.textContent='1 / '+pdf.numPages;
-        var content=document.getElementById('mvContent');if(content){var cv=document.createElement('canvas');cv.style.width='100%';cv.style.display='block';content.innerHTML='';content.appendChild(cv);renderMvPage(pdf,1,cv);}
+        var ld=document.getElementById('mvLoading');if(ld)ld.remove();
+        var content=document.getElementById('mvContent');
+        if(content){var cv=document.createElement('canvas');cv.style.cssText='width:100%;display:block;flex-shrink:0';content.appendChild(cv);renderMvPage(pdf,1,cv);}
         renderMvStrip(pdf);
-      }).catch(function(e){var c=document.getElementById('mvContent');if(c)c.innerHTML='<div style="color:#f66;margin:auto;font-size:13px;padding:20px">PDF読込エラー: '+e.message+'</div>';});
-    }catch(e){var c=document.getElementById('mvContent');if(c)c.innerHTML='<div style="color:#f66;margin:auto;font-size:13px;padding:20px">エラー: '+e.message+'</div>';}
+      }).catch(function(e){
+        var ld=document.getElementById('mvLoading');if(ld){ld.style.color='#f66';ld.textContent='PDF読込エラー: '+e.message;}
+      });
+    }catch(e){var ld=document.getElementById('mvLoading');if(ld){ld.style.color='#f66';ld.textContent='例外エラー: '+e.message;}}
   }else{
     var imgUrl=scannedImages[id]||scannedBlobUrls[id]||pdfThumbnails[id]||getImgUrl(id);
-    var content=document.getElementById('mvContent');
-    if(content&&imgUrl){
-      content.innerHTML='<div style="width:100%">'
-        +'<img src="'+imgUrl+'" style="width:100%;object-fit:contain;display:block">'
-        +(pdfThumbnails[id]&&!scannedImages[id]?'<div style="text-align:center;padding:8px;font-size:11px;color:#aaa">※ サムネイル表示（PCで高画質確認可）</div>':'')
-        +'</div>';
-    }else if(content){content.innerHTML='<div style="color:#aaa;margin:auto;font-size:13px;padding:20px">図面データがありません</div>';}
+    var ld=document.getElementById('mvLoading');
+    if(imgUrl){
+      if(ld)ld.remove();
+      var content=document.getElementById('mvContent');
+      if(content){
+        var img=document.createElement('img');img.src=imgUrl;img.style.cssText='width:100%;object-fit:contain;display:block;flex-shrink:0';
+        content.appendChild(img);
+        if(pdfThumbnails[id]&&!scannedImages[id]){var note=document.createElement('div');note.style.cssText='text-align:center;padding:8px;font-size:11px;color:#aaa';note.textContent='※ サムネイル表示（PCで高画質確認可）';content.appendChild(note);}
+      }
+    }else if(ld){ld.textContent='図面データがありません';}
   }
 }
 function closeMobileViewer(){var ov=document.getElementById('mvOverlay');if(ov)ov.parentNode.removeChild(ov);mvPdfDoc=null;}
