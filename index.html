@@ -834,6 +834,11 @@ function thumb(d,sz){
   return shapeSVG(d.shape,sz);
 }
 function getImgUrl(id){return pdfThumbnails[id]||scannedBlobUrls[id]||scannedImages[id]||''}
+function getPdfSrc(id){
+  if(typeof scannedPdfs[id]==='string')return scannedPdfs[id];
+  if(scannedImages[id]&&scannedImages[id].indexOf('application/pdf')>=0)return scannedImages[id];
+  return null;
+}
 function simColor(v){return v>=80?"#1B8C65":v>=50?"#B06E15":"#888"}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}
 function isMobileDevice(){return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)||window.innerWidth<=768}
@@ -961,7 +966,7 @@ function render(){
     h+='</select></div>';
   if(S.annoDrawing){h+='<div class="anno-toolbar">';[{k:'pen',l:'ペン'},{k:'text',l:'テキスト'},{k:'stamp-ok',l:'承認'},{k:'stamp-ng',l:'差戻'},{k:'stamp-check',l:'検査済'},{k:'stamp-quote',l:'見積依頼'},{k:'qr',l:'QRコード'},{k:'eraser',l:'消しゴム'}].forEach(function(t){h+='<button class="'+(S.annoTool===t.k?'active':'')+'" onclick="S.annoTool=\''+t.k+'\';render()">'+t.l+'</button>'});h+='<select onchange="S.annoColor=this.value" style="padding:4px 8px;border-radius:6px;border:1px solid var(--bd);font-size:11px"><option value="#C03030">赤</option><option value="#185FA5">青</option><option value="#1B8C65">緑</option><option value="#1a1a1a">黒</option></select><button onclick="clearAnno()">クリア</button></div>';
     var ad=S.annoDrawing;
-    var isPdfMulti=scannedPdfs[ad.id]&&scannedImages[ad.id];
+    var isPdfMulti=!!getPdfSrc(ad.id);
     // Active page canvas with overlay
     h+='<div id="annoWrap" style="position:relative;width:100%;background:#fff;border:1px solid var(--bd);border-radius:var(--r);overflow:visible;margin-bottom:8px">';
     if(isPdfMulti){
@@ -1099,26 +1104,6 @@ function render(){
       +'<button style="padding:8px 20px;border-radius:8px;background:#fff;color:#333;border:none;cursor:pointer;font-size:12px" onclick="closeViewer();selAnno('+S.viewerId+');S.tab=\'annotate\';render()">書込</button>'
       +'</div></div></div>';
     }
-  }
-
-  // MOBILE PDF VIEWER
-  if(S.mobileViewer){var mvd=DRAWINGS.find(function(x){return x.id===S.mobileViewer});var mvHasPdf=typeof scannedPdfs[S.mobileViewer]==='string'||(scannedImages[S.mobileViewer]&&scannedImages[S.mobileViewer].indexOf('application/pdf')>=0);
-    h+='<div style="position:fixed;inset:0;background:#111;z-index:2000;display:flex;flex-direction:column;overflow:hidden">'
-    +'<div style="display:flex;align-items:center;padding:12px 16px;background:#000;flex-shrink:0">'
-    +'<div style="flex:1;color:#fff;font-size:13px;font-weight:600">'+(mvd?esc(mvd.number)+' '+esc(mvd.name):'')+'</div>'
-    +'<button onclick="closeMobileViewer()" style="color:#fff;background:rgba(255,255,255,0.2);border:none;font-size:22px;line-height:1;padding:4px 12px;border-radius:6px;cursor:pointer">&times;</button>'
-    +'</div>'
-    +(mvHasPdf?'<div style="display:flex;align-items:center;justify-content:center;gap:20px;padding:8px 16px;background:#1a1a1a;flex-shrink:0">'
-    +'<button onclick="mobileViewerSetPage((S.mvPage||1)-1)" style="padding:8px 22px;border-radius:8px;background:#333;color:#fff;border:none;font-size:18px;cursor:pointer">◀</button>'
-    +'<span id="mvPageNum" style="color:#fff;font-size:14px;font-weight:600;min-width:70px;text-align:center">'+(S.mvPage||1)+' / ?</span>'
-    +'<button onclick="mobileViewerSetPage((S.mvPage||1)+1)" style="padding:8px 22px;border-radius:8px;background:#333;color:#fff;border:none;font-size:18px;cursor:pointer">▶</button>'
-    +'</div>':'')
-    +'<div style="flex:1;overflow:auto;background:#333;-webkit-overflow-scrolling:touch">'
-    +(mvHasPdf?'<canvas id="mvCanvas" style="width:100%;display:block"></canvas>'
-    :'<img data-scanimg="'+(S.mobileViewer)+'" style="width:100%;object-fit:contain;display:block">')
-    +'</div>'
-    +(mvHasPdf?'<div id="mvStrip" style="display:flex;gap:6px;overflow-x:auto;padding:8px 12px;background:#1a1a1a;flex-shrink:0;min-height:96px;-webkit-overflow-scrolling:touch"></div>':'')
-    +'</div>';
   }
 
   // QR SCAN RESULT MODAL
@@ -1292,12 +1277,13 @@ var annoCtx=null,drawing=false;
 function initCV(){setTimeout(function(){var c=document.getElementById('cv');if(!c)return;
   var wrap=document.getElementById('annoWrap');if(!wrap)return;
   var d=S.annoDrawing;
-  var isPdf=d&&scannedImages[d.id]&&scannedPdfs[d.id];
-  var hasImage=d&&(pdfThumbnails[d.id]||(scannedImages[d.id]&&!scannedPdfs[d.id]));
+  var pdfSrc=d&&getPdfSrc(d.id);
+  var isPdf=!!pdfSrc;
+  var hasImage=d&&(pdfThumbnails[d.id]||(scannedImages[d.id]&&!isPdf));
 
   // If PDF, always render via pdf.js for multi-page support
   if(isPdf){
-    renderPdfToCanvas(scannedImages[d.id],function(){setupAnnoCanvas()});
+    renderPdfToCanvas(pdfSrc,function(){setupAnnoCanvas()});
   }else{
     setupAnnoCanvas();
   }
@@ -2520,12 +2506,12 @@ function genInvoice(){
 function openViewer(id){if(isMobileDevice()){openMobileViewer(id);return;}S.viewerId=id;render()}
 function closeViewer(){S.viewerId=null;render()}
 
-var mvPdfDoc=null;
+var mvPdfDoc=null,mvCurPage=1;
 function openMobileViewer(id){
   var hasFile=scannedImages[id]||scannedBlobUrls[id]||scannedPdfs[id];
   if(!hasFile){
     if(fbEnabled){
-      var lm=document.createElement('div');lm.id='_mvLoad';lm.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;padding:20px 28px;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.25);z-index:9999;text-align:center;font-size:14px';lm.innerHTML='<div style="margin-bottom:8px">⏳ 図面データを取得中...</div><div style="font-size:11px;color:#666">しばらくお待ちください</div>';document.body.appendChild(lm);
+      var lm=document.createElement('div');lm.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;padding:20px 28px;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.25);z-index:9999;text-align:center;font-size:14px';lm.innerHTML='<div style="margin-bottom:8px">⏳ 図面データを取得中...</div><div style="font-size:11px;color:#666">しばらくお待ちください</div>';document.body.appendChild(lm);
       fbDB.collection('workspaces').doc('default').collection('images').doc(String(id)).get().then(function(snap){
         if(document.body.contains(lm))document.body.removeChild(lm);
         if(snap.exists){var data=snap.data();if(data.pdf){scannedPdfs[id]=data.pdf;dbPut('meta','scannedPdfs',scannedPdfs);}if(data.image){scannedImages[id]=data.image;dbPut('images',String(id),data.image);}if(data.thumb){pdfThumbnails[id]=data.thumb;dbPut('meta','pdfThumbs',pdfThumbnails);}if(scannedImages[id]||scannedPdfs[id])openMobileViewer(id);else alert('図面ファイルがありません');}else{alert('図面ファイルがありません');}
@@ -2533,45 +2519,67 @@ function openMobileViewer(id){
     }else{alert('図面ファイルがありません');}
     return;
   }
-  mvPdfDoc=null;S.mobileViewer=id;S.mvPage=1;render();
-  setTimeout(function(){
-    var pdfSrc=typeof scannedPdfs[id]==='string'?scannedPdfs[id]:null;
-    if(!pdfSrc&&scannedImages[id]&&scannedImages[id].indexOf('application/pdf')>=0)pdfSrc=scannedImages[id];
-    if(pdfSrc){
+  // Build overlay directly in body — outside render() lifecycle so it won't be wiped
+  var existing=document.getElementById('mvOverlay');if(existing)existing.parentNode.removeChild(existing);
+  mvPdfDoc=null;mvCurPage=1;
+  var d=DRAWINGS.find(function(x){return x.id===id});
+  var pdfSrc=getPdfSrc(id);
+  var ov=document.createElement('div');ov.id='mvOverlay';
+  ov.style.cssText='position:fixed;inset:0;background:#111;z-index:2000;display:flex;flex-direction:column;overflow:hidden';
+  ov.innerHTML=
+    '<div style="display:flex;align-items:center;padding:12px 16px;background:#000;flex-shrink:0">'
+    +'<div style="flex:1;color:#fff;font-size:13px;font-weight:600">'+(d?esc(d.number)+' '+esc(d.name):'')+'</div>'
+    +'<button onclick="closeMobileViewer()" style="color:#fff;background:rgba(255,255,255,0.2);border:none;font-size:24px;line-height:1;padding:4px 12px;border-radius:6px;cursor:pointer">&times;</button>'
+    +'</div>'
+    +(pdfSrc?'<div style="display:flex;align-items:center;justify-content:center;gap:20px;padding:8px 16px;background:#1a1a1a;flex-shrink:0">'
+    +'<button onclick="mobileViewerSetPage(mvCurPage-1)" style="padding:8px 22px;border-radius:8px;background:#333;color:#fff;border:none;font-size:20px;cursor:pointer">◀</button>'
+    +'<span id="mvPageNum" style="color:#fff;font-size:14px;font-weight:600;min-width:80px;text-align:center">読込中...</span>'
+    +'<button onclick="mobileViewerSetPage(mvCurPage+1)" style="padding:8px 22px;border-radius:8px;background:#333;color:#fff;border:none;font-size:20px;cursor:pointer">▶</button>'
+    +'</div>':'')
+    +'<div id="mvContent" style="flex:1;overflow:auto;background:#333;display:flex;align-items:flex-start;justify-content:center;-webkit-overflow-scrolling:touch">'
+    +'<div style="color:#aaa;margin:auto;font-size:13px">読込中...</div>'
+    +'</div>'
+    +(pdfSrc?'<div id="mvStrip" style="display:flex;gap:6px;overflow-x:auto;padding:8px 12px;background:#1a1a1a;flex-shrink:0;min-height:96px;-webkit-overflow-scrolling:touch"></div>':'');
+  document.body.appendChild(ov);
+  if(pdfSrc){
+    try{
       var raw=atob(pdfSrc.split(',')[1]);var arr=new Uint8Array(raw.length);for(var i=0;i<raw.length;i++)arr[i]=raw.charCodeAt(i);
       pdfjsLib.getDocument({data:arr}).promise.then(function(pdf){
-        mvPdfDoc=pdf;
+        mvPdfDoc=pdf;mvCurPage=1;
         var numEl=document.getElementById('mvPageNum');if(numEl)numEl.textContent='1 / '+pdf.numPages;
-        var cv=document.getElementById('mvCanvas');if(cv)renderMvPage(pdf,1,cv);
+        var content=document.getElementById('mvContent');if(content){var cv=document.createElement('canvas');cv.style.width='100%';cv.style.display='block';content.innerHTML='';content.appendChild(cv);renderMvPage(pdf,1,cv);}
         renderMvStrip(pdf);
-      }).catch(function(e){alert('PDF読込エラー: '+e.message);});
-    }
-  },50);
+      }).catch(function(e){var c=document.getElementById('mvContent');if(c)c.innerHTML='<div style="color:#f66;margin:auto;font-size:13px;padding:20px">PDF読込エラー: '+e.message+'</div>';});
+    }catch(e){var c=document.getElementById('mvContent');if(c)c.innerHTML='<div style="color:#f66;margin:auto;font-size:13px;padding:20px">エラー: '+e.message+'</div>';}
+  }else{
+    var imgUrl=getImgUrl(id);var content=document.getElementById('mvContent');
+    if(content&&imgUrl)content.innerHTML='<img src="'+imgUrl+'" style="width:100%;object-fit:contain;display:block">';
+    else if(content)content.innerHTML='<div style="color:#aaa;margin:auto;font-size:13px">画像データなし</div>';
+  }
 }
-function closeMobileViewer(){S.mobileViewer=null;mvPdfDoc=null;render();}
+function closeMobileViewer(){var ov=document.getElementById('mvOverlay');if(ov)ov.parentNode.removeChild(ov);mvPdfDoc=null;}
 function mobileViewerSetPage(page){
   if(!mvPdfDoc)return;
   if(page<1)page=1;if(page>mvPdfDoc.numPages)page=mvPdfDoc.numPages;
-  S.mvPage=page;
-  var cv=document.getElementById('mvCanvas');var numEl=document.getElementById('mvPageNum');
-  if(numEl)numEl.textContent=page+' / '+mvPdfDoc.numPages;
-  if(cv)renderMvPage(mvPdfDoc,page,cv);
-  // Highlight active thumbnail
-  var strip=document.getElementById('mvStrip');if(strip){strip.querySelectorAll('canvas').forEach(function(c,i){c.style.borderColor=(i+1===page)?'var(--ac)':'#555';});}
+  mvCurPage=page;
+  var numEl=document.getElementById('mvPageNum');if(numEl)numEl.textContent=page+' / '+mvPdfDoc.numPages;
+  var content=document.getElementById('mvContent');
+  if(content){var cv=content.querySelector('canvas');if(!cv){cv=document.createElement('canvas');cv.style.width='100%';cv.style.display='block';content.innerHTML='';content.appendChild(cv);}renderMvPage(mvPdfDoc,page,cv);}
+  var strip=document.getElementById('mvStrip');if(strip){strip.querySelectorAll('canvas').forEach(function(c,i){c.style.borderColor=(i+1===page)?'#0a84ff':'#555';});}
 }
 function renderMvPage(pdf,pageNum,canvas){
   return pdf.getPage(pageNum).then(function(page){
     var vp=page.getViewport({scale:1});
-    var targetW=canvas.parentElement?canvas.parentElement.clientWidth:window.innerWidth;
-    var sv=page.getViewport({scale:Math.max(1.5,targetW/vp.width*2)});
-    canvas.width=sv.width;canvas.height=sv.height;canvas.style.width='100%';
+    var targetW=window.innerWidth;
+    var sv=page.getViewport({scale:Math.max(1.5,targetW/vp.width*window.devicePixelRatio)});
+    canvas.width=sv.width;canvas.height=sv.height;canvas.style.width='100%';canvas.style.height='auto';
     return page.render({canvasContext:canvas.getContext('2d'),viewport:sv}).promise;
   });
 }
 function renderMvStrip(pdf){
   var strip=document.getElementById('mvStrip');if(!strip)return;strip.innerHTML='';
   for(var p=1;p<=pdf.numPages;p++){(function(pn){
-    var cv=document.createElement('canvas');cv.style.cssText='height:80px;border-radius:4px;border:2px solid '+(pn===1?'var(--ac)':'#555')+';cursor:pointer;flex-shrink:0';
+    var cv=document.createElement('canvas');cv.style.cssText='height:80px;border-radius:4px;border:2px solid '+(pn===1?'#0a84ff':'#555')+';cursor:pointer;flex-shrink:0';
     cv.onclick=function(){mobileViewerSetPage(pn);};strip.appendChild(cv);
     pdf.getPage(pn).then(function(page){var vp=page.getViewport({scale:1});var sc=80/vp.height;var sv=page.getViewport({scale:sc});cv.width=sv.width;cv.height=sv.height;cv.style.width=Math.round(sv.width)+'px';page.render({canvasContext:cv.getContext('2d'),viewport:sv});});
   })(p);}
