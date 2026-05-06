@@ -869,7 +869,7 @@ function render(){
   h+='</div>';
 
   // BOARD
-  if(S.tab==='board'){h+='<div class="section-title">案件ホワイトボード '+(_mobile?'':'<button class="g-btn" style="margin-left:auto;padding:5px 14px;font-size:11px" onclick="openRegister()">+ 図面登録（OCR）</button><label for="alritZipInput2" class="g-btn" style="padding:5px 14px;font-size:11px;background:#0E7490;color:#fff;cursor:pointer;border:none;border-radius:8px">☁ ALRITインポート</label><input type="file" id="alritZipInput2" accept=".zip" style="display:none" onchange="importAlritZip(event)">')+'</div><div class="board">';sts.forEach(function(st){var items=DRAWINGS.filter(function(d){return d.status===st});h+='<div class="board-col"><div class="board-col-head"><span class="dot" style="background:'+stC[st]+'"></span>'+st+'<span class="cnt">'+items.length+'</span></div>';items.forEach(function(d){var hasAnno=ANNOTATIONS[d.id]&&((ANNOTATIONS[d.id].lines&&ANNOTATIONS[d.id].lines.length)||(ANNOTATIONS[d.id].stamps&&ANNOTATIONS[d.id].stamps.length)||(ANNOTATIONS[d.id].texts&&ANNOTATIONS[d.id].texts.length)||(ANNOTATIONS[d.id].qrs&&ANNOTATIONS[d.id].qrs.length));h+='<div class="board-card" onclick="openDetail('+d.id+')"><div class="bc-title">'+d.name+(d.scanned?'<span class="badge badge-scan">スキャン</span>':'')+(hasAnno?'<span class="badge" style="background:#FDF3E0;color:#B06E15;margin-left:4px">✏ 書込</span>':'')+'</div><div class="bc-meta">'+d.number+' · '+d.client+'</div><div class="bc-tags"><span class="bc-tag" style="background:'+stB[st]+';color:'+stC[st]+'">'+st+'</span><span class="bc-tag" style="background:'+(d.priority==='高'?'var(--rd2)':d.priority==='中'?'var(--am2)':'var(--bg3)')+';color:'+(d.priority==='高'?'var(--rd)':d.priority==='中'?'var(--am)':'var(--tx3)')+'">'+d.priority+'</span></div><div style="display:flex;gap:4px;margin-top:6px"><button style="font-size:9px;padding:2px 6px;border-radius:4px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer" onclick="event.stopPropagation();selAnno('+d.id+');S.tab=\'annotate\';render()">書込</button><button style="font-size:9px;padding:2px 6px;border-radius:4px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer" onclick="event.stopPropagation();printDrawingImage('+d.id+')">印刷</button></div></div>'});h+='</div>'});h+='</div>'}
+  if(S.tab==='board'){h+='<div class="section-title">案件ホワイトボード '+(_mobile?'':'<button class="g-btn" style="margin-left:auto;padding:5px 14px;font-size:11px" onclick="openRegister()">+ 図面登録（OCR）</button><label for="alritZipInput2" class="g-btn" style="padding:5px 14px;font-size:11px;background:#0E7490;color:#fff;cursor:pointer;border:none;border-radius:8px">☁ ALRITインポート</label><input type="file" id="alritZipInput2" accept=".zip" style="display:none" onchange="importAlritZip(event)">')+'</div><div class="board">';sts.forEach(function(st){var items=DRAWINGS.filter(function(d){return d.status===st});h+='<div class="board-col"><div class="board-col-head"><span class="dot" style="background:'+stC[st]+'"></span>'+st+'<span class="cnt">'+items.length+'</span>'+(!_mobile&&items.length>0?'<button onclick="delByStatus(\''+st+'\')" style="margin-left:auto;padding:1px 7px;font-size:10px;border-radius:5px;border:1px solid var(--rd);background:var(--rd2);color:var(--rd);cursor:pointer">全削除</button>':'')+'</div>';items.forEach(function(d){var hasAnno=ANNOTATIONS[d.id]&&((ANNOTATIONS[d.id].lines&&ANNOTATIONS[d.id].lines.length)||(ANNOTATIONS[d.id].stamps&&ANNOTATIONS[d.id].stamps.length)||(ANNOTATIONS[d.id].texts&&ANNOTATIONS[d.id].texts.length)||(ANNOTATIONS[d.id].qrs&&ANNOTATIONS[d.id].qrs.length));h+='<div class="board-card" onclick="openDetail('+d.id+')"><div class="bc-title">'+d.name+(d.scanned?'<span class="badge badge-scan">スキャン</span>':'')+(hasAnno?'<span class="badge" style="background:#FDF3E0;color:#B06E15;margin-left:4px">✏ 書込</span>':'')+'</div><div class="bc-meta">'+d.number+' · '+d.client+'</div><div class="bc-tags"><span class="bc-tag" style="background:'+stB[st]+';color:'+stC[st]+'">'+st+'</span><span class="bc-tag" style="background:'+(d.priority==='高'?'var(--rd2)':d.priority==='中'?'var(--am2)':'var(--bg3)')+';color:'+(d.priority==='高'?'var(--rd)':d.priority==='中'?'var(--am)':'var(--tx3)')+'">'+d.priority+'</span></div><div style="display:flex;gap:4px;margin-top:6px"><button style="font-size:9px;padding:2px 6px;border-radius:4px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer" onclick="event.stopPropagation();selAnno('+d.id+');S.tab=\'annotate\';render()">書込</button><button style="font-size:9px;padding:2px 6px;border-radius:4px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer" onclick="event.stopPropagation();printDrawingImage('+d.id+')">印刷</button></div></div>'});h+='</div>'});h+='</div>'}
 
   // SEARCH
   // INTEGRATED LIST + AI SEARCH
@@ -2730,6 +2730,20 @@ function delMaster(key,idx){
   var label=typeof item==='object'?item.l:item;
   if(!confirm('「'+label+'」を削除しますか？'))return;
   MASTERS[key].splice(idx,1);saveAll();render();
+}
+
+function delByStatus(status){
+  var targets=DRAWINGS.filter(function(d){return d.status===status});
+  if(targets.length===0){alert('「'+status+'」の図面はありません');return;}
+  if(!confirm('「'+status+'」の図面を '+targets.length+' 件すべて削除しますか？\nこの操作は元に戻せません。'))return;
+  targets.forEach(function(d){
+    var id=d.id;
+    delete scannedImages[id];delete scannedPdfs[id];delete scannedBlobUrls[id];delete pdfThumbnails[id];
+    deleteImageStorage(id);
+  });
+  DRAWINGS=DRAWINGS.filter(function(d){return d.status!==status});
+  S.detail=null;saveAll();render();
+  alert(targets.length+' 件を削除しました。');
 }
 
 function delDrawing(id){
