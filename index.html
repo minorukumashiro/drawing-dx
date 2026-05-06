@@ -1048,9 +1048,9 @@ function render(){
     var hasImg=!!(pdfThumbnails[d.id]||scannedImages[d.id]||scannedBlobUrls[d.id]);
     var fileInfo=d.scanned?(scannedPdfs[d.id]?'PDF':'画像')+(hasImg?'':'（データなし）'):'未登録';
     h+='<div class="side-bg"><div class="side-dim" onclick="closeDetail()"></div><div class="side"><div style="display:flex;justify-content:space-between"><div><div class="num" style="font-size:11px;color:var(--tx3)">'+d.number+(d.scanned?' <span class="badge badge-scan">スキャン</span>':'')+'</div><h2>'+d.name+'</h2></div><button class="close-btn" onclick="closeDetail()">&times;</button></div>'
-    +'<div class="side-thumb" style="cursor:'+(hasImg?'pointer':'default')+';position:relative" onclick="'+(hasImg?'openViewer('+d.id+')':'')+'">'
+    +'<div class="side-thumb" style="cursor:'+(hasImg?'pointer':'default')+';position:relative" onclick="'+(hasImg?'downloadDrawingFile('+d.id+')':'')+'">'
     +thumb(d,600)
-    +(hasImg?'<div style="position:absolute;bottom:4px;right:4px;background:rgba(0,0,0,0.5);color:#fff;padding:2px 8px;border-radius:4px;font-size:9px">クリックで拡大</div>':'')
+    +(hasImg?'<div style="position:absolute;bottom:4px;right:4px;background:rgba(0,0,0,0.5);color:#fff;padding:2px 8px;border-radius:4px;font-size:9px">クリックでダウンロード</div>':'')
     +'</div>'
     +'<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">'
     +''
