@@ -1723,18 +1723,25 @@ async function exportClientPdf(clientName){
       var d=items[i];
       var statusEl=document.getElementById('pdfExportStatus');
       if(statusEl)statusEl.textContent=(i+1)+' / '+items.length+' — '+d.number;
-      
-      // Get image data (prefer PDF thumbnail > scanned image)
-      var imgUrl=pdfThumbnails[d.id]||scannedImages[d.id];
-      if(!imgUrl){skipped++;continue}
-      
-      // Render image to canvas to measure dimensions
-      var imgData=await loadImageForPdf(imgUrl);
+
+      // 高品質ソースを優先: 原本PDF → 原本画像 → サムネイル
+      var imgData=null;
+      var pdfSrc=typeof scannedPdfs[d.id]==='string'?scannedPdfs[d.id]:null;
+      if(pdfSrc){
+        // PDFをpdf.jsで高解像度レンダリング（scale 2.5）
+        imgData=await renderPdfPageForExport(pdfSrc,2.5);
+      }
+      if(!imgData&&scannedImages[d.id]){
+        imgData=await loadImageForPdf(scannedImages[d.id]);
+      }
+      if(!imgData&&pdfThumbnails[d.id]){
+        imgData=await loadImageForPdf(pdfThumbnails[d.id]);
+      }
       if(!imgData){skipped++;continue}
-      
+
       // Add new page (except for first)
       if(added>0)doc.addPage();
-      
+
       // Header: drawing info
       doc.setFontSize(10);
       doc.setTextColor(60,60,60);
@@ -1743,7 +1750,7 @@ async function exportClientPdf(clientName){
       doc.setTextColor(120,120,120);
       var info=[d.mat,d.size,d.status].filter(Boolean).join(' | ');
       doc.text(info,margin,margin+9);
-      
+
       // Calculate image size to fit page (with header space)
       var headerH=14;
       var availW=pageW-margin*2;
@@ -1753,8 +1760,8 @@ async function exportClientPdf(clientName){
       if(hgt>availH){hgt=availH;w=hgt*ratio}
       var x=(pageW-w)/2;
       var y=margin+headerH+(availH-hgt)/2;
-      
-      doc.addImage(imgData.src,'JPEG',x,y,w,hgt,'','FAST');
+
+      doc.addImage(imgData.src,'JPEG',x,y,w,hgt,'','SLOW');
       added++;
       
       // Yield to UI occasionally
@@ -1781,26 +1788,44 @@ async function exportClientPdf(clientName){
   }
 }
 
+function renderPdfPageForExport(pdfDataUrl,scale){
+  return new Promise(function(resolve){
+    if(typeof pdfjsLib==='undefined'){resolve(null);return;}
+    try{
+      var raw=atob(pdfDataUrl.split(',')[1]);
+      var arr=new Uint8Array(raw.length);
+      for(var i=0;i<raw.length;i++)arr[i]=raw.charCodeAt(i);
+      pdfjsLib.getDocument({data:arr}).promise.then(function(pdf){
+        return pdf.getPage(1);
+      }).then(function(page){
+        var vp=page.getViewport({scale:scale||2.5});
+        var cv=document.createElement('canvas');
+        cv.width=vp.width;cv.height=vp.height;
+        var ctx=cv.getContext('2d');
+        ctx.fillStyle='#fff';ctx.fillRect(0,0,cv.width,cv.height);
+        return page.render({canvasContext:ctx,viewport:vp}).promise.then(function(){
+          resolve({src:cv.toDataURL('image/jpeg',0.95),w:cv.width,h:cv.height});
+        });
+      }).catch(function(){resolve(null);});
+    }catch(e){resolve(null);}
+  });
+}
+
 function loadImageForPdf(src){
   return new Promise(function(resolve){
     var img=new Image();
     img.crossOrigin='anonymous';
     img.onload=function(){
       try{
-        // Render to canvas to convert to JPEG for smaller file size
-        var maxDim=2000;
+        var maxDim=3000;
         var w=img.naturalWidth,h=img.naturalHeight;
-        if(w>maxDim||h>maxDim){
-          var r=Math.min(maxDim/w,maxDim/h);
-          w=w*r;h=h*r;
-        }
+        if(w>maxDim||h>maxDim){var r=Math.min(maxDim/w,maxDim/h);w=Math.round(w*r);h=Math.round(h*r);}
         var canvas=document.createElement('canvas');
         canvas.width=w;canvas.height=h;
         var ctx=canvas.getContext('2d');
-        ctx.fillStyle='#fff';
-        ctx.fillRect(0,0,w,h);
+        ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);
         ctx.drawImage(img,0,0,w,h);
-        resolve({src:canvas.toDataURL('image/jpeg',0.85),w:w,h:h});
+        resolve({src:canvas.toDataURL('image/jpeg',0.95),w:w,h:h});
       }catch(e){resolve(null)}
     };
     img.onerror=function(){resolve(null)};
