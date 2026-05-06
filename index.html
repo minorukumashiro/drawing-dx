@@ -551,8 +551,8 @@ function fbStartListener(){
     if(!doc.exists)return;
     var data=doc.data();
     if(!data)return;
-    // ローカル保存から5秒以内は自分の変更を上書きしない
-    if(Date.now()-fbLastLocalChange<5000)return;
+    // 自分のエコーのみ抑制（他デバイスの変更は常に適用）
+    if(data.lastClient===fbClientId()&&Date.now()-fbLastLocalChange<3000)return;
     // Merge: server data overwrites local
     if(data.drawings){DRAWINGS=data.drawings;DRAWINGS.forEach(function(d){if(d.status==='検図中')d.status='検討中';});}
     if(data.masters){MASTERS=data.masters;if(MASTERS.statuses){var idx=MASTERS.statuses.indexOf('検図中');if(idx>=0)MASTERS.statuses[idx]='検討中';}}
@@ -1576,7 +1576,7 @@ function clearAnno(){
   initCV();
 }
 function setTab(t){S.tab=t;render()}
-function openDetail(id){var d=DRAWINGS.find(function(x){return x.id===id});if(d){d.lastAccess=new Date().toISOString().slice(0,10);saveAll();S.detail=Object.assign({},d,{_sim:0});render()}}
+function openDetail(id){var d=DRAWINGS.find(function(x){return x.id===id});if(d){d.lastAccess=new Date().toISOString().slice(0,10);dbPut('meta','drawings',DRAWINGS);S.detail=Object.assign({},d,{_sim:0});render()}}
 function closeDetail(){S.detail=null;render()}
 function changeStatus(id,newStatus){var d=DRAWINGS.find(function(x){return x.id===id});if(!d)return;d.status=newStatus;if(S.detail&&S.detail.id===id)S.detail.status=newStatus;saveAll();render();}
 function calcSimilarity(src,tgt){
@@ -2508,13 +2508,13 @@ function closeViewer(){S.viewerId=null;render()}
 
 var mvPdfDoc=null,mvCurPage=1;
 function openMobileViewer(id){
-  var hasFile=scannedImages[id]||scannedBlobUrls[id]||scannedPdfs[id];
+  var hasFile=scannedImages[id]||scannedBlobUrls[id]||scannedPdfs[id]||pdfThumbnails[id];
   if(!hasFile){
     if(fbEnabled){
       var lm=document.createElement('div');lm.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;padding:20px 28px;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.25);z-index:9999;text-align:center;font-size:14px';lm.innerHTML='<div style="margin-bottom:8px">⏳ 図面データを取得中...</div><div style="font-size:11px;color:#666">しばらくお待ちください</div>';document.body.appendChild(lm);
       fbDB.collection('workspaces').doc('default').collection('images').doc(String(id)).get().then(function(snap){
         if(document.body.contains(lm))document.body.removeChild(lm);
-        if(snap.exists){var data=snap.data();if(data.pdf){scannedPdfs[id]=data.pdf;dbPut('meta','scannedPdfs',scannedPdfs);}if(data.image){scannedImages[id]=data.image;dbPut('images',String(id),data.image);}if(data.thumb){pdfThumbnails[id]=data.thumb;dbPut('meta','pdfThumbs',pdfThumbnails);}if(scannedImages[id]||scannedPdfs[id])openMobileViewer(id);else alert('図面ファイルがありません');}else{alert('図面ファイルがありません');}
+        if(snap.exists){var data=snap.data();if(data.pdf){scannedPdfs[id]=data.pdf;dbPut('meta','scannedPdfs',scannedPdfs);}if(data.image){scannedImages[id]=data.image;dbPut('images',String(id),data.image);}if(data.thumb){pdfThumbnails[id]=data.thumb;dbPut('meta','pdfThumbs',pdfThumbnails);}openMobileViewer(id);}else{alert('図面ファイルがありません');}
       }).catch(function(e){if(document.body.contains(lm))document.body.removeChild(lm);alert('取得エラー: '+e.message);});
     }else{alert('図面ファイルがありません');}
     return;
@@ -2552,9 +2552,14 @@ function openMobileViewer(id){
       }).catch(function(e){var c=document.getElementById('mvContent');if(c)c.innerHTML='<div style="color:#f66;margin:auto;font-size:13px;padding:20px">PDF読込エラー: '+e.message+'</div>';});
     }catch(e){var c=document.getElementById('mvContent');if(c)c.innerHTML='<div style="color:#f66;margin:auto;font-size:13px;padding:20px">エラー: '+e.message+'</div>';}
   }else{
-    var imgUrl=getImgUrl(id);var content=document.getElementById('mvContent');
-    if(content&&imgUrl)content.innerHTML='<img src="'+imgUrl+'" style="width:100%;object-fit:contain;display:block">';
-    else if(content)content.innerHTML='<div style="color:#aaa;margin:auto;font-size:13px">画像データなし</div>';
+    var imgUrl=scannedImages[id]||scannedBlobUrls[id]||pdfThumbnails[id]||getImgUrl(id);
+    var content=document.getElementById('mvContent');
+    if(content&&imgUrl){
+      content.innerHTML='<div style="width:100%">'
+        +'<img src="'+imgUrl+'" style="width:100%;object-fit:contain;display:block">'
+        +(pdfThumbnails[id]&&!scannedImages[id]?'<div style="text-align:center;padding:8px;font-size:11px;color:#aaa">※ サムネイル表示（PCで高画質確認可）</div>':'')
+        +'</div>';
+    }else if(content){content.innerHTML='<div style="color:#aaa;margin:auto;font-size:13px;padding:20px">図面データがありません</div>';}
   }
 }
 function closeMobileViewer(){var ov=document.getElementById('mvOverlay');if(ov)ov.parentNode.removeChild(ov);mvPdfDoc=null;}
