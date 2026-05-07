@@ -763,6 +763,16 @@ function resetAllData(){
   dbClear(function(){location.reload()});
 }
 
+function mobileForcePull(){
+  if(!fbEnabled){alert('Firebase未接続です。インターネット接続を確認してください。');return}
+  localStorage.removeItem('dxp_fbCache');
+  window._fbSnapshotReceived=false;
+  window._cacheLoaded=false;
+  updateSyncStatus('connecting');
+  if(fbUnsubscribe){fbUnsubscribe();fbUnsubscribe=null;}
+  fbStartListener();
+}
+
 async function forcePushToFirebase(){
   if(!fbEnabled){alert('Firebase未接続です。');return}
   if(!confirm('PCの現在のデータ（'+DRAWINGS.length+'件）をFirebaseに送信してスマホと同期します。\nよろしいですか？'))return;
@@ -979,7 +989,7 @@ function render(){
     h+='<button class="nav-tab" style="background:var(--gn);color:#fff;font-weight:600;display:flex;align-items:center;gap:4px" onclick="startQRScanner()">📷 QRスキャン</button>';
   }
   var _ssc=(function(){var cm={connecting:'#0066CC',pushing:'#0066CC',synced:'#1B8C65',error:'#D70015',offline:'#86868b'};var tm={connecting:'⟳ 接続中...',pushing:'⟳ 同期中...',synced:'✓ 同期済',error:'⚠ 同期エラー',offline:'○ オフライン'};return{c:cm[fbSyncState]||'#86868b',t:tm[fbSyncState]||'○ オフライン'};})();
-  h+='<div id="fbSyncStatus" style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;background:var(--bg2);color:'+_ssc.c+';white-space:nowrap" title="Firebase同期状態">'+_ssc.t+'</div>';
+  h+='<div id="fbSyncStatus" style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;background:var(--bg2);color:'+_ssc.c+';white-space:nowrap;cursor:pointer" title="タップして再取得" onclick="mobileForcePull()">'+_ssc.t+'</div>';
   if(!_mobile){
     h+='<button class="nav-tab" style="background:var(--ac);color:#fff;font-weight:600" onclick="openRegister()">+ 図面登録</button>';
     h+='<button class="nav-tab" style="background:#6E47A6;color:#fff;font-weight:600" onclick="openBulkRegister()">📚 一括登録</button>';
