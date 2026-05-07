@@ -200,6 +200,62 @@ var FIREBASE_CONFIG={
 var fbApp=null,fbDB=null,fbEnabled=false,fbSyncing=false,fbUnsubscribe=null,fbLastLocalChange=0;
 // Force re-sync all images on first push after this version (better quality)
 window._fbSyncedImages={};
+
+// ========== 自動JSONバックアップ ==========
+var _autoSaveHandle=null;
+var _autoSaveTimer=null;
+
+async function setupAutoSave(){
+  if(!window.showSaveFilePicker){alert('自動保存はChrome/Edgeのみ対応しています。');return}
+  try{
+    var handle=await window.showSaveFilePicker({
+      suggestedName:'dxp_autosave.json',
+      types:[{description:'JSONバックアップ',accept:{'application/json':['.json']}}]
+    });
+    _autoSaveHandle=handle;
+    dbPut('meta','_autoSaveHandle',handle);
+    render();
+    await doAutoSave();
+    alert('自動保存先を設定しました！\nデータ変更時に自動で上書き保存されます。');
+  }catch(e){if(e.name!=='AbortError')console.warn('自動保存設定エラー:',e.message)}
+}
+
+async function clearAutoSave(){
+  _autoSaveHandle=null;
+  dbDel('meta','_autoSaveHandle');
+  render();
+}
+
+async function doAutoSave(){
+  if(!_autoSaveHandle)return;
+  try{
+    var perm=await _autoSaveHandle.queryPermission({mode:'readwrite'});
+    if(perm==='prompt')perm=await _autoSaveHandle.requestPermission({mode:'readwrite'});
+    if(perm!=='granted'){_autoSaveHandle=null;dbDel('meta','_autoSaveHandle');render();return}
+    var data={version:2,date:new Date().toISOString(),drawings:DRAWINGS,invoices:INVOICES,masters:MASTERS,nextId:nextId,scannedPdfs:scannedPdfs,pdfThumbnails:pdfThumbnails,scannedImages:scannedImages};
+    var writable=await _autoSaveHandle.createWritable();
+    await writable.write(JSON.stringify(data));
+    await writable.close();
+  }catch(e){
+    console.warn('自動保存失敗:',e.message);
+    if(e.name==='NotAllowedError'){_autoSaveHandle=null;dbDel('meta','_autoSaveHandle');render()}
+  }
+}
+
+function scheduleAutoSave(){
+  if(!_autoSaveHandle)return;
+  clearTimeout(_autoSaveTimer);
+  _autoSaveTimer=setTimeout(doAutoSave,2000);
+}
+
+// 起動時にIndexedDBから自動保存先ハンドルを復元
+(function restoreAutoSaveHandle(){
+  setTimeout(function(){
+    dbGet('meta','_autoSaveHandle',function(h){
+      if(h){_autoSaveHandle=h;render()}
+    });
+  },1000);
+})();
 try{
   if(typeof firebase!=='undefined'){
     fbApp=firebase.initializeApp(FIREBASE_CONFIG);
@@ -299,11 +355,12 @@ function loadData(){
       tx.oncomplete=function(){
         if(reqs.drawings.result){
           DRAWINGS=reqs.drawings.result;
-        }else{
-          // Try localStorage migration
+        }else if(!window._cacheLoaded){
+          // IndexedDB 空 & dxp_fbCache も未ロード → localStorage 移行か DEFAULT にフォールバック
           var ld=localStorage.getItem('dxp_drawings');
           if(ld)DRAWINGS=JSON.parse(ld);else DRAWINGS=DEFAULT_DRAWINGS.slice();
         }
+        // window._cacheLoaded=true の場合は dxp_fbCache が既に DRAWINGS を設定済みなのでそのまま使用
         INVOICES=reqs.invoices.result||[];
         scannedPdfs=reqs.scannedPdfs.result||{};
         pdfThumbnails=reqs.pdfThumbs.result||{};
@@ -418,11 +475,24 @@ function saveAll(){
     clearTimeout(window._fbSyncTimer);
     window._fbSyncTimer=setTimeout(fbPushAll,1500);
   }
+  // 自動JSONバックアップ（保存先が設定されている場合）
+  scheduleAutoSave();
 }
 
 // ========== Firebase Sync Functions (metadata only, no images) ==========
 function fbPushAll(){
   if(!fbEnabled||fbSyncing)return;
+  // Firebase からの初回 snapshot を受け取る前に push しない（起動時のデフォルトデータ上書きを防ぐ）
+  if(!window._fbSnapshotReceived){
+    clearTimeout(window._fbSyncTimer);
+    window._fbSyncTimer=setTimeout(fbPushAll,3000);
+    return;
+  }
+  // デモデータ（DEFAULT_DRAWINGS）をそのまま push しない
+  if(DRAWINGS.length>0&&DRAWINGS.length===DEFAULT_DRAWINGS.length){
+    var isDefault=DRAWINGS.every(function(d,i){return d.id===DEFAULT_DRAWINGS[i].id&&d.number===DEFAULT_DRAWINGS[i].number});
+    if(isDefault)return;
+  }
   fbSyncing=true;
   updateSyncStatus('pushing');
   // Save metadata as a single document
@@ -553,6 +623,8 @@ function fbStartListener(){
     if(!data)return;
     // 自分のエコーのみ抑制（他デバイスの変更は常に適用）
     if(data.lastClient===fbClientId()&&Date.now()-fbLastLocalChange<3000)return;
+    // Firebase から初回データ受信フラグ — これが立つ前は push しない
+    window._fbSnapshotReceived=true;
     // Merge: server data overwrites local
     if(data.drawings){DRAWINGS=data.drawings;DRAWINGS.forEach(function(d){if(d.status==='検図中')d.status='検討中';});}
     if(data.masters){MASTERS=data.masters;if(MASTERS.statuses){var idx=MASTERS.statuses.indexOf('検図中');if(idx>=0)MASTERS.statuses[idx]='検討中';}}
@@ -691,6 +763,45 @@ function resetAllData(){
   dbClear(function(){location.reload()});
 }
 
+async function forcePushToFirebase(){
+  if(!fbEnabled){alert('Firebase未接続です。');return}
+  if(!confirm('PCの現在のデータ（'+DRAWINGS.length+'件）をFirebaseに送信してスマホと同期します。\nよろしいですか？'))return;
+  updateSyncStatus('pushing');
+  try{
+    var payload={
+      drawings:DRAWINGS,masters:MASTERS,inspections:inspectionReports,
+      invoices:INVOICES,annotations:ANNOTATIONS,nextId:nextId,
+      lastModified:firebase.firestore.FieldValue.serverTimestamp(),
+      lastClient:fbClientId()
+    };
+    await fbDB.collection('workspaces').doc('default').set(payload);
+    fbLastLocalChange=Date.now();
+    window._fbSnapshotReceived=true;
+    await fbPushImages();
+    updateSyncStatus('synced');
+    alert('Firebase送信完了！\nスマホ側でリロードすると最新データが表示されます。');
+  }catch(e){
+    updateSyncStatus('error',e.message);
+    alert('送信エラー: '+e.message);
+  }
+}
+
+function forceRestoreFromFirebase(){
+  if(!fbEnabled){alert('Firebase未接続です。Wi-Fi環境でお試しください。');return}
+  if(!confirm('ローカルキャッシュをすべてクリアし、Firebaseから最新データを強制取得します。\n\nよろしいですか？'))return;
+  // ローカル蓄積データをクリアしてから Firebase pull
+  localStorage.removeItem('dxp_fbCache');
+  localStorage.removeItem('dxp_drawings');
+  window._fbSnapshotReceived=false;
+  window._cacheLoaded=false;
+  dbClear(function(){
+    DRAWINGS=[];INVOICES=[];scannedImages={};scannedPdfs={};pdfThumbnails={};
+    render();
+    fbStartListener();
+    alert('Firebaseから再取得中です。\n数秒後にデータが表示されます。');
+  });
+}
+
 function exportAllData(){
   var data={
     version:2,
@@ -797,6 +908,7 @@ try{
       if(data.invoices)INVOICES=data.invoices;
       if(data.annotations)ANNOTATIONS=data.annotations;
       if(data.nextId)nextId=data.nextId;
+      window._cacheLoaded=true; // IndexedDB が空でもこのデータを保持する
       // Render cached data instantly
       render();
     }
@@ -1006,14 +1118,28 @@ function render(){
     h+='<div style="background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:16px;margin-bottom:16px">';
     h+='<div style="font-weight:600;font-size:13px;margin-bottom:8px;color:var(--tx)">💾 データ管理（バックアップ・復元）</div>';
     h+='<div style="font-size:11px;color:var(--tx3);margin-bottom:10px">HTMLファイルを更新する前にエクスポートしておけば、新しいファイルでインポートしてデータを引き継げます。<br>図面画像も含めて保存されます。</div>';
-    h+='<div style="display:flex;gap:8px;flex-wrap:wrap">';
+    h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">';
     h+='<button class="g-btn" style="padding:8px 16px;font-size:12px" onclick="exportAllData()">📤 エクスポート（バックアップ）</button>';
     h+='<button class="g-btn" style="padding:8px 16px;font-size:12px" onclick="document.getElementById(\'importFile\').click()">📥 インポート（復元）</button>';
     h+='<input type="file" id="importFile" accept=".json" style="display:none" onchange="importAllData(event)">';
-    
     h+='<button style="padding:8px 16px;font-size:12px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--rd);cursor:pointer" onclick="resetAllData()">初期化</button>';
-    h+='<button style="padding:8px 16px;font-size:12px;border-radius:8px;border:1px solid var(--bd);background:#E5F0FF;color:var(--ac);cursor:pointer" onclick="forceResyncImages()" title="全画像を再アップロード（高画質化）">🔄 画像を再同期</button>';
-    h+='</div></div>';
+    h+='<button style="padding:8px 16px;font-size:12px;border-radius:8px;border:1px solid var(--bd);background:#E5F0FF;color:var(--ac);cursor:pointer" onclick="forceResyncImages()">🔄 画像を再同期</button>';
+    h+='<button style="padding:8px 16px;font-size:12px;border-radius:8px;border:1px solid #f0ad4e;background:#fff8e6;color:#a06010;cursor:pointer" onclick="forceRestoreFromFirebase()">⚠ Firebaseから強制復元</button>';
+    if(fbEnabled)h+='<button style="padding:8px 16px;font-size:12px;border-radius:8px;border:none;background:#1B8C65;color:#fff;cursor:pointer;font-weight:600" onclick="forcePushToFirebase()">📤 PCデータをスマホに同期</button>';
+    h+='</div>';
+    // 自動JSONバックアップ設定
+    if(_autoSaveHandle){
+      h+='<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;font-size:12px">';
+      h+='<span style="color:#166534">✓ 自動バックアップ設定済み — データ変更時に自動で上書き保存されます</span>';
+      h+='<button onclick="clearAutoSave()" style="padding:3px 10px;font-size:11px;border-radius:6px;border:1px solid #aaa;background:#fff;color:#666;cursor:pointer;margin-left:auto">解除</button>';
+      h+='</div>';
+    }else{
+      h+='<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg2);border:1px solid var(--bd);border-radius:8px;font-size:12px">';
+      h+='<span style="color:var(--tx3)">自動バックアップ未設定 — 保存のたびにJSONファイルを自動上書きします</span>';
+      h+='<button onclick="setupAutoSave()" style="padding:4px 14px;font-size:12px;border-radius:6px;border:none;background:var(--ac);color:#fff;cursor:pointer;margin-left:auto;font-weight:600">📂 保存先を設定</button>';
+      h+='</div>';
+    }
+    h+='</div>';
     // Server URL setting
     h+='<div style="background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:16px;margin-bottom:16px">';
     h+='<div style="font-weight:600;font-size:13px;margin-bottom:8px;color:var(--tx)">📱 スマホ連動サーバー設定</div>';
