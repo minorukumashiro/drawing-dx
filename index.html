@@ -866,8 +866,29 @@ function importAllData(event){
       }
       
       saveAll();
-      alert('インポート完了！ 図面:'+DRAWINGS.length+'件');
       render();
+      // インポート直後にFirebaseへ強制送信
+      if(fbEnabled){
+        window._fbSnapshotReceived=true;
+        fbSyncing=false;
+        updateSyncStatus('pushing');
+        var _impPayload={
+          drawings:DRAWINGS,masters:MASTERS,inspections:inspectionReports,
+          invoices:INVOICES,annotations:ANNOTATIONS,nextId:nextId,
+          lastModified:firebase.firestore.FieldValue.serverTimestamp(),
+          lastClient:fbClientId()
+        };
+        fbDB.collection('workspaces').doc('default').set(_impPayload).then(function(){
+          fbLastLocalChange=Date.now();
+          updateSyncStatus('synced');
+          alert('インポート完了！ 図面:'+DRAWINGS.length+'件\nFirebaseへの送信も完了しました。スマホをリロードすると反映されます。');
+          return fbPushImages();
+        }).catch(function(e){
+          alert('インポート完了！ 図面:'+DRAWINGS.length+'件\n※Firebase送信エラー: '+e.message);
+        });
+      }else{
+        alert('インポート完了！ 図面:'+DRAWINGS.length+'件');
+      }
     }catch(err){
       alert('インポートエラー: '+err.message);
     }
@@ -992,6 +1013,7 @@ function render(){
   }
   var _ssc=(function(){var cm={connecting:'#0066CC',pushing:'#0066CC',synced:'#1B8C65',error:'#D70015',offline:'#86868b'};var tm={connecting:'⟳ 接続中...',pushing:'⟳ 同期中...',synced:'✓ 同期済',error:'⚠ 同期エラー',offline:'○ オフライン'};return{c:cm[fbSyncState]||'#86868b',t:tm[fbSyncState]||'○ オフライン'};})();
   h+='<div id="fbSyncStatus" style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;background:var(--bg2);color:'+_ssc.c+';white-space:nowrap;cursor:pointer" title="タップして再取得" onclick="mobileForcePull()">'+_ssc.t+'</div>';
+  if(fbEnabled)h+='<button style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;border:none;background:#1B8C65;color:#fff;white-space:nowrap;cursor:pointer" onclick="forcePushToFirebase()" title="PCのデータをFirebaseに強制送信">📤 全データ送信</button>';
   if(!_mobile){
     h+='<button class="nav-tab" style="background:var(--ac);color:#fff;font-weight:600" onclick="openRegister()">+ 図面登録</button>';
     h+='<button class="nav-tab" style="background:#6E47A6;color:#fff;font-weight:600" onclick="openBulkRegister()">📚 一括登録</button>';
