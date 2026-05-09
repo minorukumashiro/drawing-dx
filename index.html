@@ -575,7 +575,12 @@ async function fbPushImages(){
       window._fbSyncedImages[id]=version;
       // 画像アップ完了後に imgVer を更新（メタデータ push 前に設定することで一発で整合性が取れる）
       var dObj=DRAWINGS.find(function(x){return String(x.id)===id});
-      if(dObj)dObj.imgVer=Date.now();
+      if(dObj){
+        dObj.imgVer=Date.now();
+        // _localImgVer も更新してPC自身がエコーで自分の画像を再取得しないようにする
+        _localImgVer[String(id)]=dObj.imgVer;
+        try{localStorage.setItem('dxp_localImgVer',JSON.stringify(_localImgVer));}catch(e){}
+      }
       if(i%3===2)await new Promise(function(r){setTimeout(r,50)});
     }catch(e){
       console.warn('Image sync failed for id',id,':',e.message);
@@ -712,6 +717,13 @@ async function fbPullMissingImages(){
           _localImgVer[id]=dObj.imgVer;
           try{localStorage.setItem('dxp_localImgVer',JSON.stringify(_localImgVer));}catch(e){}
         }
+        // Firebaseから取得した画像を「同期済み」としてマーク → モバイル側が fbPushAll 時に再アップロードしないようにする
+        if(!window._fbSyncedImages)window._fbSyncedImages={};
+        var fetchedImg=scannedImages[id];
+        var fetchedPdf=scannedPdfs[id];
+        var fetchedThumb=pdfThumbnails[id];
+        var fetchedPdfLen=fetchedPdf&&typeof fetchedPdf==='string'?fetchedPdf.length:0;
+        window._fbSyncedImages[id]=(fetchedImg?fetchedImg.length:0)+'_'+fetchedPdfLen+'_'+(fetchedThumb?fetchedThumb.length:0);
       }
     }catch(e){console.warn('Pull failed for',id,':',e.message)}
     if(i%3===2)await new Promise(function(r){setTimeout(r,50)});
