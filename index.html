@@ -1008,7 +1008,7 @@ function getPdfSrc(id){
 function simColor(v){return v>=80?"#1B8C65":v>=50?"#B06E15":"#888"}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}
 function isMobileDevice(){return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)||window.innerWidth<=768}
-var S={tab:'board',search:'',clientFilter:'',fcat:'すべて',minSim:0,sel:null,results:null,searching:false,detail:null,regOpen:false,regPrev:null,regName:'',regBlobUrl:null,regIsPdf:false,ocrSt:'idle',ocrF:{},invType:'見積書',invDrawing:null,invSearch:'',annoDrawing:null,annoSearch:'',annoPage:1,annoPageCount:0,annoTool:'pen',annoColor:'#C03030',annoStamps:[],annoQRs:[],annoTexts:[],annoLines:[],editOpen:false,editDwg:null,viewerId:null,bulkOpen:false,bulkItems:[],bulkSelected:0};
+var S={tab:'board',search:'',clientFilter:'',fcat:'すべて',minSim:0,sel:null,results:null,searching:false,detail:null,regOpen:false,regPrev:null,regName:'',regBlobUrl:null,regIsPdf:false,ocrSt:'idle',ocrF:{},invType:'見積書',invDrawing:null,invSearch:'',annoDrawing:null,annoSearch:'',annoPage:1,annoPageCount:0,annoTool:'pen',annoColor:'#C03030',annoStamps:[],annoQRs:[],annoTexts:[],annoLines:[],editOpen:false,editDwg:null,viewerId:null,bulkOpen:false,bulkItems:[],bulkSelected:0,verifyOpen:false};
 
 function render(){
   var app=document.getElementById('app'),sts=["検討中","見積済","製造中","完了","納品済"],stC={"検討中":"#185FA5","見積済":"#B06E15","製造中":"var(--ac)","完了":"#0E7490","納品済":"#1B8C65"},stB={"検討中":"#E6F1FB","見積済":"#FDF3E0","製造中":"#EEEDFE","完了":"#E0F7FA","納品済":"#E8F5EE"},cats=["すべて"].concat(Array.from(new Set(DRAWINGS.map(function(d){return d.cat}))));
@@ -1062,6 +1062,7 @@ function render(){
     // Client filter text input
     h+='<input id="clientFilterBox" placeholder="取引先で絞込..." value="'+esc(S.clientFilter||'')+'" style="padding:8px 12px;border:1px solid var(--bd);border-radius:10px;font-size:13px;background:var(--bg);box-shadow:var(--shadow);max-width:200px;flex:1;color:'+(S.clientFilter?'var(--ac)':'var(--tx)')+';font-weight:'+(S.clientFilter?'600':'normal')+'">';
     cats.forEach(function(c){h+='<button class="f-btn '+(S.fcat===c?'on':'off')+'" onclick="S.fcat=\''+c+'\';render()">'+c+'</button>'});
+    h+='<button class="f-btn" style="margin-left:auto;background:var(--bg2);color:var(--tx2);font-size:11px" onclick="S.verifyOpen=true;render()">🔍 図面確認</button>';
     h+='</div>';
     // Group by client sorted by Japanese 50-on order
     var clients={};
@@ -1244,6 +1245,40 @@ function render(){
     +'<div class="f-row"><div class="f-field"><label>数量</label><input id="eQty" type="number" value="'+esc(String(ed.qty||''))+'"></div><div class="f-field"><label>納期</label><input id="eDeadline" type="date" value="'+esc(ed.deadline||'')+'"></div></div>'
     +'<div class="f-field" style="margin-bottom:12px"><label>タグ（カンマ区切り）</label><input id="eTg" value="'+esc((ed.tags||[]).join(', '))+'"></div>'
     +'</div><div class="modal-foot"><button class="btn-cancel" onclick="closeEdit()">キャンセル</button><button class="btn-save" onclick="saveEdit()">保存</button></div></div></div>'}
+
+  // VERIFY MODAL
+  if(S.verifyOpen){
+    var stC2={"検討中":"#185FA5","見積済":"#B06E15","製造中":"var(--ac)","完了":"#0E7490","納品済":"#1B8C65"};
+    h+='<div class="modal-bg" onclick="S.verifyOpen=false;render()"><div class="modal" style="max-width:1200px;width:98vw;max-height:96vh" onclick="event.stopPropagation()">';
+    h+='<div class="modal-head"><h2>🔍 図面データ確認 — 全'+DRAWINGS.length+'件</h2><button class="close-btn" onclick="S.verifyOpen=false;render()">&times;</button></div>';
+    h+='<div style="padding:14px 18px 8px;font-size:12px;color:var(--tx3);background:var(--bg2);border-bottom:1px solid var(--bd)">サムネイルと図面番号・品名が一致しているか目視確認してください。おかしい図面は【修正】で正しいファイルを再アップロードしてください。</div>';
+    h+='<div style="overflow-y:auto;max-height:calc(96vh - 120px);padding:16px">';
+    h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px">';
+    var sorted=DRAWINGS.slice().sort(function(a,b){return a.client.localeCompare(b.client,'ja')||a.number.localeCompare(b.number,'ja')});
+    sorted.forEach(function(d){
+      var hasImg=!!(pdfThumbnails[d.id]||scannedImages[d.id]||scannedBlobUrls[d.id]);
+      var stColor=stC2[d.status]||'#86868b';
+      h+='<div style="border:1px solid var(--bd);border-radius:8px;background:var(--bg);overflow:hidden;display:flex;flex-direction:column">';
+      h+='<div style="height:160px;background:#f5f5f7;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative">';
+      if(hasImg){
+        h+='<img data-scanimg="'+d.id+'" style="max-width:100%;max-height:160px;object-fit:contain">';
+      }else{
+        h+='<div style="font-size:11px;color:#999;text-align:center">画像なし</div>';
+      }
+      h+='<span style="position:absolute;top:4px;left:4px;background:'+stColor+';color:#fff;font-size:9px;font-weight:700;padding:2px 6px;border-radius:8px">'+esc(d.status)+'</span>';
+      h+='</div>';
+      h+='<div style="padding:8px 10px;flex:1;display:flex;flex-direction:column;gap:3px">';
+      h+='<div style="font-size:10px;color:var(--ac);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(d.number)+'</div>';
+      h+='<div style="font-size:11px;font-weight:600;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(d.name)+'">'+esc(d.name)+'</div>';
+      h+='<div style="font-size:10px;color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(d.client)+'</div>';
+      h+='</div>';
+      h+='<div style="padding:6px 8px;border-top:1px solid var(--bd);display:flex;gap:6px">';
+      h+='<button style="flex:1;padding:5px;font-size:11px;border-radius:6px;border:1px solid var(--ac);background:var(--ac2);color:var(--ac);cursor:pointer;font-weight:600" onclick="S.verifyOpen=false;editDrawing('+d.id+')">修正</button>';
+      h+='</div>';
+      h+='</div>';
+    });
+    h+='</div></div></div></div>';
+  }
 
   // VIEWER MODAL (full screen drawing viewer)
   if(S.viewerId){var vd=DRAWINGS.find(function(x){return x.id===S.viewerId});
