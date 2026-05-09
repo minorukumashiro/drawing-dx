@@ -495,20 +495,20 @@ function fbPushAll(){
   }
   fbSyncing=true;
   updateSyncStatus('pushing');
-  // Save metadata as a single document
-  var payload={
-    drawings:DRAWINGS,
-    masters:MASTERS,
-    inspections:inspectionReports,
-    invoices:INVOICES,
-    annotations:ANNOTATIONS,
-    nextId:nextId,
-    lastModified:firebase.firestore.FieldValue.serverTimestamp(),
-    lastClient:fbClientId()
-  };
-  fbDB.collection('workspaces').doc('default').set(payload).then(function(){
-    // After metadata, sync images (one document per drawing image)
-    return fbPushImages();
+  // 【重要】画像を先にアップロード → imgVer を設定 → メタデータ送信
+  // こうすることでスマホが onSnapshot を受け取った時点で画像が必ず Firebase に存在する
+  fbPushImages().then(function(){
+    var payload={
+      drawings:DRAWINGS,  // imgVer が設定済みの状態でまとめて送信
+      masters:MASTERS,
+      inspections:inspectionReports,
+      invoices:INVOICES,
+      annotations:ANNOTATIONS,
+      nextId:nextId,
+      lastModified:firebase.firestore.FieldValue.serverTimestamp(),
+      lastClient:fbClientId()
+    };
+    return fbDB.collection('workspaces').doc('default').set(payload);
   }).then(function(){
     fbSyncing=false;
     updateSyncStatus('synced');
@@ -520,6 +520,8 @@ function fbPushAll(){
 }
 
 // Push images to Firestore individually (one doc per drawing image)
+// 画像を先にアップロードし、完了後に imgVer を図面に設定する。
+// メタデータ push は呼び出し元（fbPushAll）がこの完了を待ってから行う。
 async function fbPushImages(){
   if(!fbEnabled)return;
   var allIds=Object.keys(scannedImages).concat(Object.keys(scannedPdfs));
@@ -527,25 +529,27 @@ async function fbPushImages(){
   var seen={};
   var ids=[];
   allIds.forEach(function(id){if(!seen[id]){seen[id]=true;ids.push(id)}});
-  
+
   // Track which images have been synced (avoid re-uploading)
   if(!window._fbSyncedImages)window._fbSyncedImages={};
-  
+
   var MAX_BYTES=950*1024; // ~950KB raw = ~1.27MB base64. Keep below 1MB Firestore limit.
-  
+
   for(var i=0;i<ids.length;i++){
     var id=ids[i];
     var img=scannedImages[id];
     var pdf=scannedPdfs[id];
     var thumb=pdfThumbnails[id];
-    var version=(img?img.length:0)+'_'+(pdf?pdf.length:0)+'_'+(thumb?thumb.length:0);
+    // pdf が boolean true の場合（単体登録PDFの legacy 形式）は length が undefined になるため String() で正規化
+    var pdfLen=pdf&&typeof pdf==='string'?pdf.length:0;
+    var version=(img?img.length:0)+'_'+pdfLen+'_'+(thumb?thumb.length:0);
     if(window._fbSyncedImages[id]===version)continue;
-    
+
     try{
       var doc={updated:Date.now()};
-      
+
       // Image: compress as needed to fit MAX_BYTES while keeping high quality
-      if(img){
+      if(img&&typeof img==='string'){
         if(img.length<MAX_BYTES){
           doc.image=img;
         }else{
@@ -554,21 +558,24 @@ async function fbPushImages(){
           if(compressed)doc.image=compressed;
         }
       }
-      
-      // PDF: include if fits, otherwise rely on thumbnail
-      if(pdf&&pdf.length<MAX_BYTES){
+
+      // PDF: include if fits (string data URL のみ、boolean flag は除外)
+      if(pdf&&typeof pdf==='string'&&pdf.length<MAX_BYTES){
         doc.pdf=pdf;
       }
-      
+
       // Thumbnail: always include if available (small)
-      if(thumb&&thumb.length<MAX_BYTES){
+      if(thumb&&typeof thumb==='string'&&thumb.length<MAX_BYTES){
         doc.thumb=thumb;
       }
-      
+
       if(Object.keys(doc).length<=1)continue;
-      
+
       await fbDB.collection('workspaces').doc('default').collection('images').doc(String(id)).set(doc);
       window._fbSyncedImages[id]=version;
+      // 画像アップ完了後に imgVer を更新（メタデータ push 前に設定することで一発で整合性が取れる）
+      var dObj=DRAWINGS.find(function(x){return String(x.id)===id});
+      if(dObj)dObj.imgVer=Date.now();
       if(i%3===2)await new Promise(function(r){setTimeout(r,50)});
     }catch(e){
       console.warn('Image sync failed for id',id,':',e.message);
@@ -663,24 +670,26 @@ function fbStartListener(){
   });
 }
 
-// Pull images from Firebase that aren't in local IndexedDB yet
+// Pull images from Firebase that aren't in local IndexedDB yet, or whose imgVer changed
 async function fbPullMissingImages(){
   if(!fbEnabled||!DRAWINGS)return;
-  // Find drawings whose image is missing locally
+  // mobileForcePull 経由の場合は全スキャン済み図面を対象にする（1回限り）
+  var forcePull=!!window._forcePullImages;
+  window._forcePullImages=false;
   var missingIds=[];
   DRAWINGS.forEach(function(d){
     var id=d.id;
-    // サムネイルだけあってもPDF/画像本体がなければ取得対象にする
-    if(d.scanned&&!scannedImages[id]&&!scannedPdfs[id]){
+    var localHasImage=scannedImages[id]||scannedPdfs[id];
+    // 画像未取得 or imgVer がローカル記録より新しい or 強制再取得フラグ
+    var imgVerStale=d.imgVer&&(d.imgVer>(_localImgVer[String(id)]||0));
+    if(d.scanned&&(!localHasImage||imgVerStale||forcePull)){
       missingIds.push(String(id));
     }
   });
   if(missingIds.length===0)return;
-  
-  // Pull each missing image (max 30 at a time to avoid overwhelming)
-  var batch=missingIds.slice(0,30);
-  for(var i=0;i<batch.length;i++){
-    var id=batch[i];
+
+  for(var i=0;i<missingIds.length;i++){
+    var id=missingIds[i];
     try{
       var snap=await fbDB.collection('workspaces').doc('default').collection('images').doc(id).get();
       if(snap.exists){
@@ -696,6 +705,12 @@ async function fbPullMissingImages(){
         if(data.thumb){
           pdfThumbnails[id]=data.thumb;
           dbPut('meta','pdfThumbs',pdfThumbnails);
+        }
+        // ローカルの imgVer を更新して次回の不要な再取得を防ぐ
+        var dObj=DRAWINGS.find(function(x){return String(x.id)===id});
+        if(dObj&&dObj.imgVer){
+          _localImgVer[id]=dObj.imgVer;
+          try{localStorage.setItem('dxp_localImgVer',JSON.stringify(_localImgVer));}catch(e){}
         }
       }
     }catch(e){console.warn('Pull failed for',id,':',e.message)}
@@ -766,6 +781,11 @@ function resetAllData(){
 function mobileForcePull(){
   if(!fbEnabled){alert('Firebase未接続です。インターネット接続を確認してください。');return}
   localStorage.removeItem('dxp_fbCache');
+  // imgVer キャッシュをクリア
+  _localImgVer={};
+  localStorage.removeItem('dxp_localImgVer');
+  // imgVer の有無に関わらず全スキャン済み図面の画像を強制再取得するフラグ
+  window._forcePullImages=true;
   window._fbSnapshotReceived=false;
   window._cacheLoaded=false;
   updateSyncStatus('connecting');
@@ -778,18 +798,20 @@ async function forcePushToFirebase(){
   if(!confirm('PCの現在のデータ（'+DRAWINGS.length+'件）をFirebaseに送信してスマホと同期します。\nよろしいですか？'))return;
   updateSyncStatus('pushing');
   try{
+    // 【重要】画像を先にアップロード → imgVer 設定 → メタデータ送信の順で整合性を保証
+    window._fbSyncedImages={};// 全画像を強制再アップロード
+    window._fbSnapshotReceived=true;
+    await fbPushImages();
     var payload={
       drawings:DRAWINGS,masters:MASTERS,inspections:inspectionReports,
       invoices:INVOICES,annotations:ANNOTATIONS,nextId:nextId,
       lastModified:firebase.firestore.FieldValue.serverTimestamp(),
       lastClient:fbClientId()
     };
-    await fbDB.collection('workspaces').doc('default').set(payload);
     fbLastLocalChange=Date.now();
-    window._fbSnapshotReceived=true;
-    await fbPushImages();
+    await fbDB.collection('workspaces').doc('default').set(payload);
     updateSyncStatus('synced');
-    alert('Firebase送信完了！\nスマホ側でリロードすると最新データが表示されます。');
+    alert('Firebase送信完了！\nスマホ側で同期ボタンをタップすると最新データが表示されます。');
   }catch(e){
     updateSyncStatus('error',e.message);
     alert('送信エラー: '+e.message);
@@ -900,6 +922,7 @@ function importAllData(event){
 var DRAWINGS=[];
 var SIM={circle:{shaft:30,bracket:15,plate:20,spacer:58},shaft:{circle:30,bracket:20,plate:12,spacer:62},bracket:{circle:15,shaft:20,plate:45,spacer:12},plate:{circle:20,shaft:12,bracket:45,spacer:15},spacer:{circle:58,shaft:62,bracket:12,plate:15}};
 var INVOICES=[],scannedImages={},scannedPdfs={},scannedBlobUrls={},pdfThumbnails={},inspectionReports={},nextId=11;
+var _localImgVer={};try{var _livStr=localStorage.getItem('dxp_localImgVer');if(_livStr)_localImgVer=JSON.parse(_livStr);}catch(e){}
 var ANNOTATIONS={}; // {drawingId: {stamps:[], qrs:[], texts:[], lines:[], updated:timestamp}}
 
 // マスターデータ（初期値）
@@ -2510,6 +2533,7 @@ async function bulkSubmit(){
           scannedImages[existRec.id]=dataUrl;
         }
         existRec.scanned=true;
+        existRec.imgVer=Date.now();
         added++;
       }else{
         var newDrawing={
@@ -2526,7 +2550,8 @@ async function bulkSubmit(){
           shape:'plate',
           status:it.status||'検討中',
           priority:'中',
-          scanned:true
+          scanned:true,
+          imgVer:Date.now()
         };
         if(it.isPdf){
           scannedPdfs[newDrawing.id]=dataUrl;
@@ -2657,7 +2682,7 @@ function parseOCR(t){
 
   return f;
 }
-function saveDwg(){var num=document.getElementById('rN').value.trim(),nm=document.getElementById('rNm').value.trim();if(!num||!nm){alert('図面番号と名称は必須');return}var id=nextId++;var cl=document.getElementById('rCl').value.trim()||'未指定';DRAWINGS.unshift({id:id,number:num,name:nm,cat:document.getElementById('rC').value,mat:document.getElementById('rM').value.trim()||'未指定',size:document.getElementById('rSz').value.trim()||'未指定',client:cl,price:parseInt(document.getElementById('rPr').value)||0,date:new Date().toISOString().slice(0,10),tags:(document.getElementById('rTg').value||'').split(/[,、]/).map(function(t){return t.trim()}).filter(Boolean),shape:document.getElementById('rSh').value,status:document.getElementById('rSt').value,priority:document.getElementById('rPri').value,scanned:true,isPdf:S.regIsPdf});if(S.regPrev){scannedImages[id]=S.regPrev;if(S.regBlobUrl)scannedBlobUrls[id]=S.regBlobUrl;if(S.regIsPdf)scannedPdfs[id]=true}S.regOpen=false;S.tab='list';S.fcat='すべて';S.search='';saveAll();render()}
+function saveDwg(){var num=document.getElementById('rN').value.trim(),nm=document.getElementById('rNm').value.trim();if(!num||!nm){alert('図面番号と名称は必須');return}var id=nextId++;var cl=document.getElementById('rCl').value.trim()||'未指定';DRAWINGS.unshift({id:id,number:num,name:nm,cat:document.getElementById('rC').value,mat:document.getElementById('rM').value.trim()||'未指定',size:document.getElementById('rSz').value.trim()||'未指定',client:cl,price:parseInt(document.getElementById('rPr').value)||0,date:new Date().toISOString().slice(0,10),tags:(document.getElementById('rTg').value||'').split(/[,、]/).map(function(t){return t.trim()}).filter(Boolean),shape:document.getElementById('rSh').value,status:document.getElementById('rSt').value,priority:document.getElementById('rPri').value,scanned:true,isPdf:S.regIsPdf,imgVer:Date.now()});if(S.regPrev){scannedImages[id]=S.regPrev;if(S.regBlobUrl)scannedBlobUrls[id]=S.regBlobUrl;if(S.regIsPdf)scannedPdfs[id]=true}S.regOpen=false;S.tab='list';S.fcat='すべて';S.search='';saveAll();render()}
 function genInvoice(){
   var s=document.getElementById('invSel');
   var selId=s?s.value:'';
@@ -2925,6 +2950,7 @@ function reuploadImage(id){
       scannedImages[id]=dataUrl;
       d.scanned=true;
       d.isPdf=isPdf;
+      d.imgVer=Date.now();
       if(isPdf){
         scannedPdfs[id]=true;
         // Generate thumbnail
