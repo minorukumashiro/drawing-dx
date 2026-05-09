@@ -447,7 +447,7 @@ function loadFromLocalStorage(){
   }catch(e){DRAWINGS=DEFAULT_DRAWINGS.slice();MASTERS=JSON.parse(JSON.stringify(DEF_MASTERS))}
 }
 
-function saveAll(){
+function saveAll(skipImages){
   // Save metadata to IndexedDB
   dbPut('meta','drawings',DRAWINGS);
   dbPut('meta','invoices',INVOICES);
@@ -461,23 +461,23 @@ function saveAll(){
   Object.keys(scannedImages).forEach(function(id){
     dbPut('images',String(id),scannedImages[id]);
   });
-  // Firebase sync (debounced) — always update timestamp so onSnapshot suppression works
+  // Firebase sync (debounced)
   if(fbEnabled){
     fbLastLocalChange=Date.now();
     clearTimeout(window._fbSyncTimer);
-    window._fbSyncTimer=setTimeout(fbPushAll,1500);
+    window._fbSyncTimer=setTimeout(function(){fbPushAll(!!skipImages);},skipImages?500:1500);
   }
   // 自動JSONバックアップ（保存先が設定されている場合）
   scheduleAutoSave();
 }
 
 // ========== Firebase Sync Functions (metadata only, no images) ==========
-function fbPushAll(){
+function fbPushAll(skipImages){
   if(!fbEnabled||fbSyncing)return;
   // Firebase からの初回 snapshot を受け取る前に push しない（起動時のデフォルトデータ上書きを防ぐ）
   if(!window._fbSnapshotReceived){
     clearTimeout(window._fbSyncTimer);
-    window._fbSyncTimer=setTimeout(fbPushAll,3000);
+    window._fbSyncTimer=setTimeout(function(){fbPushAll(skipImages);},3000);
     return;
   }
   // デモデータ（DEFAULT_DRAWINGS）をそのまま push しない
@@ -487,11 +487,11 @@ function fbPushAll(){
   }
   fbSyncing=true;
   updateSyncStatus('pushing');
-  // 【重要】画像を先にアップロード → imgVer を設定 → メタデータ送信
-  // こうすることでスマホが onSnapshot を受け取った時点で画像が必ず Firebase に存在する
-  fbPushImages().then(function(){
+  // skipImages=true（ステータス変更・書き込みなど画像変化なし）の場合は画像アップロードをスキップして即メタデータ送信
+  var imgPromise=skipImages?Promise.resolve():fbPushImages();
+  imgPromise.then(function(){
     var payload={
-      drawings:DRAWINGS,  // imgVer が設定済みの状態でまとめて送信
+      drawings:DRAWINGS,
       masters:MASTERS,
       inspections:inspectionReports,
       invoices:INVOICES,
@@ -1691,7 +1691,7 @@ function clearAnno(){
 function setTab(t){S.tab=t;render()}
 function openDetail(id){var d=DRAWINGS.find(function(x){return x.id===id});if(d){d.lastAccess=new Date().toISOString().slice(0,10);dbPut('meta','drawings',DRAWINGS);S.detail=Object.assign({},d,{_sim:0});render()}}
 function closeDetail(){S.detail=null;render()}
-function changeStatus(id,newStatus){var d=DRAWINGS.find(function(x){return x.id===id});if(!d)return;d.status=newStatus;if(S.detail&&S.detail.id===id)S.detail.status=newStatus;saveAll();render();}
+function changeStatus(id,newStatus){var d=DRAWINGS.find(function(x){return x.id===id});if(!d)return;d.status=newStatus;if(S.detail&&S.detail.id===id)S.detail.status=newStatus;saveAll(true);render();}
 function calcSimilarity(src,tgt){
   var score=0,max=0,reasons=[];
 
@@ -1983,7 +1983,7 @@ function saveCurrentAnnotations(){
   }else{
     delete ANNOTATIONS[id];
   }
-  saveAll();
+  saveAll(true);
 }
 function openRegister(){S.regOpen=true;S.regPrev=null;S.regName='';S.regIsPdf=false;S.ocrSt='idle';S.ocrF={};render()}
 
@@ -2459,7 +2459,7 @@ function genInvoice(){
   if(!d){alert('図面が見つかりません');return}
   S.invDrawing=d;
   INVOICES.push({type:S.invType,drawing:d,date:new Date().toISOString().slice(0,10)});
-  saveAll();render();
+  saveAll(true);render();
 }
 
 function openViewer(id){if(isMobileDevice()){openMobileViewer(id);return;}S.viewerId=id;render()}
@@ -2762,7 +2762,7 @@ function saveEdit(){
   orig.deadline=document.getElementById('eDeadline').value||'';
   var tgs=document.getElementById('eTg').value.trim();
   orig.tags=tgs?tgs.split(/[,、，]/).map(function(t){return t.trim()}).filter(Boolean):orig.tags;
-  S.editOpen=false;S.editDwg=null;saveAll();render();
+  S.editOpen=false;S.editDwg=null;saveAll(true);render();
 }
 
 // Master management
@@ -2796,7 +2796,7 @@ function addMaster(key){
   var input=document.getElementById('mi_'+key);if(!input)return;
   var val=input.value.trim();if(!val)return;
   if(MASTERS[key].indexOf(val)>=0){alert('既に存在します');return}
-  MASTERS[key].push(val);saveAll();render();
+  MASTERS[key].push(val);saveAll(true);render();
 }
 function addShape(){
   var vInput=document.getElementById('mi_shapes_v');
@@ -2805,13 +2805,13 @@ function addShape(){
   var v=vInput.value.trim(),l=lInput.value.trim();
   if(!v||!l){alert('値と表示名を両方入力してください');return}
   if(MASTERS.shapes.some(function(s){return s.v===v})){alert('この値は既に存在します');return}
-  MASTERS.shapes.push({v:v,l:l});saveAll();render();
+  MASTERS.shapes.push({v:v,l:l});saveAll(true);render();
 }
 function delMaster(key,idx){
   var item=MASTERS[key][idx];
   var label=typeof item==='object'?item.l:item;
   if(!confirm('「'+label+'」を削除しますか？'))return;
-  MASTERS[key].splice(idx,1);saveAll();render();
+  MASTERS[key].splice(idx,1);saveAll(true);render();
 }
 
 function delByStatus(status){
