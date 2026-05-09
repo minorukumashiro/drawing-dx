@@ -472,9 +472,16 @@ function saveAll(skipImages){
 }
 
 // ========== Firebase Sync Functions (metadata only, no images) ==========
+var fbMetaSyncing=false;
 function fbPushAll(skipImages){
-  if(!fbEnabled||fbSyncing)return;
-  // Firebase からの初回 snapshot を受け取る前に push しない（起動時のデフォルトデータ上書きを防ぐ）
+  if(!fbEnabled)return;
+  // 画像アップロード中でも skipImages=true(メタのみ)は通す。60秒超で fbSyncing 自動リセット。
+  if(fbSyncing&&!skipImages){
+    if(window._fbSyncingAt&&Date.now()-window._fbSyncingAt>60000){fbSyncing=false;}
+    else return;
+  }
+  if(fbMetaSyncing)return;
+  // Firebase からの初回 snapshot を受け取る前に push しない
   if(!window._fbSnapshotReceived){
     clearTimeout(window._fbSyncTimer);
     window._fbSyncTimer=setTimeout(function(){fbPushAll(skipImages);},3000);
@@ -485,30 +492,39 @@ function fbPushAll(skipImages){
     var isDefault=DRAWINGS.every(function(d,i){return d.id===DEFAULT_DRAWINGS[i].id&&d.number===DEFAULT_DRAWINGS[i].number});
     if(isDefault)return;
   }
-  fbSyncing=true;
   updateSyncStatus('pushing');
-  // skipImages=true（ステータス変更・書き込みなど画像変化なし）の場合は画像アップロードをスキップして即メタデータ送信
-  var imgPromise=skipImages?Promise.resolve():fbPushImages();
-  imgPromise.then(function(){
+  function pushMeta(){
+    fbMetaSyncing=true;
     var payload={
-      drawings:DRAWINGS,
-      masters:MASTERS,
-      inspections:inspectionReports,
-      invoices:INVOICES,
-      annotations:ANNOTATIONS,
-      nextId:nextId,
+      drawings:DRAWINGS,masters:MASTERS,inspections:inspectionReports,
+      invoices:INVOICES,annotations:ANNOTATIONS,nextId:nextId,
       lastModified:firebase.firestore.FieldValue.serverTimestamp(),
       lastClient:fbClientId()
     };
-    return fbDB.collection('workspaces').doc('default').set(payload);
-  }).then(function(){
-    fbSyncing=false;
-    updateSyncStatus('synced');
-  }).catch(function(e){
-    fbSyncing=false;
-    updateSyncStatus('error',e.message);
-    console.error('Firebase push failed:',e);
-  });
+    fbDB.collection('workspaces').doc('default').set(payload).then(function(){
+      fbMetaSyncing=false;
+      updateSyncStatus('synced');
+    }).catch(function(e){
+      fbMetaSyncing=false;
+      updateSyncStatus('error',e.message);
+      console.error('Firebase push failed:',e);
+    });
+  }
+  if(skipImages){
+    // ステータス変更・書き込みなど — 画像アップロードを待たず即送信
+    pushMeta();
+  }else{
+    fbSyncing=true;
+    window._fbSyncingAt=Date.now();
+    fbPushImages().then(function(){
+      fbSyncing=false;
+      pushMeta();
+    }).catch(function(e){
+      fbSyncing=false;
+      updateSyncStatus('error',e.message);
+      console.error('Firebase image push failed:',e);
+    });
+  }
 }
 
 // Push images to Firestore individually (one doc per drawing image)
@@ -637,8 +653,7 @@ function fbStartListener(){
     if(data.invoices)INVOICES=data.invoices;
     if(data.annotations)ANNOTATIONS=data.annotations;
     if(data.nextId)nextId=Math.max(nextId,data.nextId);
-    // Save to IndexedDB without triggering another Firebase push
-    fbSyncing=true;
+    // Save to IndexedDB
     dbPut('meta','drawings',DRAWINGS);
     dbPut('meta','masters',MASTERS);
     dbPut('meta','inspections',inspectionReports);
@@ -656,7 +671,6 @@ function fbStartListener(){
         nextId:nextId
       }));
     }catch(e){/* localStorage may be full */}
-    setTimeout(function(){fbSyncing=false},500);
     updateSyncStatus('synced');
     render();
     // Pull missing images from Firebase (background)
