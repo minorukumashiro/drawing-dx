@@ -1026,6 +1026,7 @@ function render(){
     h+='<button class="nav-tab" style="background:var(--ac);color:#fff;font-weight:600" onclick="openRegister()">+ 図面登録</button>';
     h+='<button class="nav-tab" style="background:#6E47A6;color:#fff;font-weight:600" onclick="openBulkRegister()">📚 一括登録</button>';
     h+='<label for="alritZipInput" class="nav-tab" style="background:#0E7490;color:#fff;font-weight:600;cursor:pointer">☁ ALRITインポート</label><input type="file" id="alritZipInput" accept=".zip" style="display:none" onchange="importAlritZip(event)">';
+    h+='<button class="nav-tab" style="background:#555;color:#fff;font-weight:600" onclick="S.verifyOpen=true;render()">🔍 図面確認</button>';
   }
   h+='</div></div><div class="kpi-row">';
   // Storage usage
@@ -1062,7 +1063,6 @@ function render(){
     // Client filter text input
     h+='<input id="clientFilterBox" placeholder="取引先で絞込..." value="'+esc(S.clientFilter||'')+'" style="padding:8px 12px;border:1px solid var(--bd);border-radius:10px;font-size:13px;background:var(--bg);box-shadow:var(--shadow);max-width:200px;flex:1;color:'+(S.clientFilter?'var(--ac)':'var(--tx)')+';font-weight:'+(S.clientFilter?'600':'normal')+'">';
     cats.forEach(function(c){h+='<button class="f-btn '+(S.fcat===c?'on':'off')+'" onclick="S.fcat=\''+c+'\';render()">'+c+'</button>'});
-    h+='<button class="f-btn" style="margin-left:auto;background:var(--bg2);color:var(--tx2);font-size:11px" onclick="S.verifyOpen=true;render()">🔍 図面確認</button>';
     h+='</div>';
     // Group by client sorted by Japanese 50-on order
     var clients={};
