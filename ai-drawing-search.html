@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 類似図面検索</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#fff;--bg2:#f6f5f3;--bg3:#eeecea;--text:#1a1a1a;--text2:#666;--text3:#999;--border:#e0dfdc;--accent:#534AB7;--accent-bg:#EEEDFE;--green:#1D9E75;--amber:#BA7517;--radius:10px}
+body{font-family:-apple-system,'Hiragino Sans',sans-serif;background:var(--bg2);color:var(--text);line-height:1.5}
+.container{max-width:960px;margin:0 auto;padding:20px}
+.header{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+.logo{width:36px;height:36px;border-radius:8px;background:var(--accent);display:flex;align-items:center;justify-content:center}
+.header h1{font-size:18px;font-weight:600}
+.header p{font-size:12px;color:var(--text3)}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px}
+.stat{background:var(--bg);border-radius:var(--radius);padding:14px 16px;border:1px solid var(--border)}
+.stat-label{font-size:12px;color:var(--text3)}
+.stat-value{font-size:24px;font-weight:600;margin-top:2px}
+.stat-value span{font-size:13px;font-weight:400;color:var(--text2)}
+.drop-zone{border:2px dashed var(--border);border-radius:var(--radius);padding:32px 20px;text-align:center;margin-bottom:20px;background:var(--bg);cursor:pointer;transition:all .2s}
+.drop-zone.over{border-color:var(--accent);background:var(--accent-bg)}
+.drop-zone.searching{cursor:default}
+.drop-zone h3{font-size:14px;font-weight:500;margin-top:8px}
+.drop-zone p{font-size:12px;color:var(--text3);margin-top:4px}
+.dots{display:flex;justify-content:center;gap:6px;margin-bottom:10px}
+.dots span{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1s ease-in-out infinite}
+.dots span:nth-child(2){animation-delay:.15s}
+.dots span:nth-child(3){animation-delay:.3s}
+@keyframes pulse{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1.2)}}
+.source-card{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:14px 18px;margin-bottom:20px;display:flex;align-items:center;gap:16px}
+.source-thumb{background:var(--bg2);border-radius:8px;padding:8px;flex-shrink:0}
+.source-info{flex:1}
+.source-info .label{font-size:11px;color:var(--text3);letter-spacing:.04em}
+.source-info .name{font-size:15px;font-weight:600;margin-top:2px}
+.source-info .meta{font-size:12px;color:var(--text2);margin-top:2px}
+.source-count{text-align:right}
+.source-count .num{font-size:24px;font-weight:600;color:var(--accent)}
+.source-count .unit{font-size:11px;color:var(--text3)}
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:16px}
+.tab{padding:8px 18px;font-size:13px;font-weight:500;background:none;border:none;cursor:pointer;color:var(--text2);border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .15s}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.filters{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
+.search-input{position:relative;flex:1 1 200px;max-width:280px}
+.search-input input{width:100%;padding:8px 12px 8px 34px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);outline:none}
+.search-input input:focus{border-color:var(--accent)}
+.search-input svg{position:absolute;left:10px;top:50%;transform:translateY(-50%)}
+.cat-btn{padding:5px 12px;border-radius:8px;font-size:12px;cursor:pointer;border:none;font-weight:500;transition:all .15s}
+.cat-btn.active{background:var(--accent);color:#fff}
+.cat-btn:not(.active){background:var(--bg);color:var(--text2)}
+.sim-filter{display:flex;align-items:center;gap:6px;margin-left:auto;font-size:12px;color:var(--text3)}
+.sim-filter input[type=range]{width:80px;accent-color:var(--accent)}
+.sim-filter .val{font-weight:500;color:var(--text2);min-width:32px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+.card{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:14px;cursor:pointer;transition:border-color .15s}
+.card:hover{border-color:#bbb}
+.card-thumb{display:flex;justify-content:center;background:var(--bg2);border-radius:8px;padding:14px 0;margin-bottom:10px}
+.card-name{font-weight:600;font-size:13px}
+.card-meta{font-size:11px;color:var(--text3);margin-top:2px}
+.card-footer{display:flex;justify-content:space-between;align-items:center;margin-top:8px}
+.card-cat{font-size:11px;padding:2px 8px;border-radius:6px;background:var(--bg2);color:var(--text2)}
+.card-search-btn{padding:4px 10px;border-radius:6px;border:none;background:var(--accent-bg);color:var(--accent);font-size:11px;font-weight:500;cursor:pointer}
+.card-search-btn:hover{background:#DDDAF8}
+.result-item{display:flex;align-items:center;gap:14px;padding:12px 16px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px;cursor:pointer;transition:border-color .15s}
+.result-item:hover{border-color:#bbb}
+.result-rank{font-size:13px;color:var(--text3);font-weight:600;min-width:24px;text-align:center}
+.result-thumb{background:var(--bg2);border-radius:8px;padding:6px;flex-shrink:0}
+.result-info{flex:1;min-width:0}
+.result-info .top{display:flex;align-items:center;gap:8px}
+.result-info .top .name{font-weight:600;font-size:14px}
+.result-info .top .cat{font-size:11px;padding:1px 6px;border-radius:6px;background:var(--bg2);color:var(--text3)}
+.result-info .detail{font-size:12px;color:var(--text2);margin-top:2px}
+.sim-bar-wrap{min-width:130px;display:flex;align-items:center;gap:8px}
+.sim-bar{flex:1;height:6px;border-radius:3px;background:var(--bg3)}
+.sim-bar-fill{height:100%;border-radius:3px;transition:width .6s}
+.sim-pct{font-size:13px;font-weight:600;min-width:42px;text-align:right}
+.result-price{text-align:right;min-width:70px}
+.result-price .price{font-size:14px;font-weight:600}
+.result-price .date{font-size:11px;color:var(--text3)}
+.empty{text-align:center;padding:3rem;color:var(--text3);font-size:13px}
+.overlay{position:fixed;inset:0;z-index:100;display:flex;justify-content:flex-end}
+.overlay-bg{position:absolute;inset:0;background:rgba(0,0,0,.25)}
+.panel{position:relative;width:400px;max-width:90vw;height:100%;background:var(--bg);border-left:1px solid var(--border);overflow-y:auto;padding:24px}
+.panel-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px}
+.panel-header .num{font-size:11px;color:var(--text3);letter-spacing:.05em}
+.panel-header h2{font-size:18px;font-weight:600;margin-top:4px}
+.panel-close{background:none;border:none;cursor:pointer;font-size:22px;color:var(--text3);padding:4px}
+.panel-thumb{display:flex;justify-content:center;background:var(--bg2);border-radius:var(--radius);padding:24px;margin-bottom:20px}
+.panel-sim{margin-bottom:20px}
+.panel-sim .label{font-size:12px;color:var(--text3);margin-bottom:6px}
+.panel-fields{background:var(--bg2);border-radius:var(--radius);padding:16px;margin-bottom:20px}
+.panel-field{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px}
+.panel-field:last-child{border-bottom:none}
+.panel-field .fl{color:var(--text3)}
+.panel-field .fv{font-weight:500}
+.panel-tags{margin-bottom:20px}
+.panel-tags .label{font-size:12px;color:var(--text3);margin-bottom:8px}
+.panel-tags .tags{display:flex;gap:6px;flex-wrap:wrap}
+.panel-tags .tag{padding:3px 10px;border-radius:8px;border:1px solid var(--border);font-size:12px;color:var(--text2)}
+.panel-actions{display:flex;gap:8px}
+.btn-primary{flex:1;padding:10px 0;border-radius:8px;background:var(--accent-bg);color:var(--accent);border:none;font-weight:500;font-size:13px;cursor:pointer}
+.btn-primary:hover{background:#DDDAF8}
+.btn-secondary{flex:1;padding:10px 0;border-radius:8px;background:var(--bg2);color:var(--text);border:1px solid var(--border);font-weight:500;font-size:13px;cursor:pointer}
+.btn-secondary:hover{background:var(--bg3)}
+.btn-green{flex:1;padding:10px 0;border-radius:8px;background:#E6F7F2;color:var(--green);border:1px solid #b8e8d8;font-weight:500;font-size:13px;cursor:pointer}
+.btn-green:hover{background:#d0f0e6}
+.tab-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;border-radius:9px;background:var(--accent);color:#fff;font-size:10px;font-weight:700;padding:0 4px;margin-left:5px;vertical-align:middle}
+.quote-item{display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px}
+.quote-item-info{flex:1;min-width:0}
+.quote-item-info .qname{font-weight:600;font-size:14px}
+.quote-item-info .qmeta{font-size:12px;color:var(--text2);margin-top:2px}
+.qty-ctrl{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.qty-btn{width:26px;height:26px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);font-size:16px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--text2)}
+.qty-btn:hover{background:var(--bg3)}
+.qty-num{min-width:28px;text-align:center;font-size:15px;font-weight:600}
+.quote-subtotal{text-align:right;min-width:90px;flex-shrink:0}
+.quote-subtotal .sub{font-size:14px;font-weight:600}
+.quote-subtotal .unit{font-size:11px;color:var(--text3)}
+.quote-del{background:none;border:none;cursor:pointer;color:var(--text3);font-size:18px;padding:4px;flex-shrink:0}
+.quote-del:hover{color:#c0392b}
+.quote-footer{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:16px 20px;margin-top:16px}
+.quote-total-row{display:flex;justify-content:space-between;align-items:center;font-size:14px;color:var(--text2);padding:4px 0}
+.quote-total-row.main{font-size:18px;font-weight:700;color:var(--text);border-top:1px solid var(--border);margin-top:8px;padding-top:12px}
+.quote-print-btn{width:100%;margin-top:16px;padding:11px 0;border-radius:8px;background:var(--accent);color:#fff;border:none;font-weight:600;font-size:14px;cursor:pointer}
+.quote-print-btn:hover{background:#443da0}
+.toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#1a1a1a;color:#fff;padding:10px 20px;border-radius:10px;font-size:13px;font-weight:500;z-index:200;opacity:0;transition:opacity .25s;pointer-events:none}
+.toast.show{opacity:1}
+@media(max-width:600px){.stats{grid-template-columns:1fr}.grid{grid-template-columns:1fr}.sim-bar-wrap{min-width:80px}.result-price{display:none}.filters{flex-direction:column;align-items:stretch}.sim-filter{margin-left:0}}
+</style>
+</head>
+<body>
+<div class="container" id="app"></div>
+<script>
+const DRAWINGS=[
+{id:1,number:"DWG-0291",name:"フランジ A型 φ80",category:"フランジ",material:"SUS304",size:"φ80×t12",client:"東洋機械工業",price:4800,date:"2025-11-12",tags:["フランジ","丸型","穴4"],shape:"circle-4hole"},
+{id:2,number:"DWG-0315",name:"シャフト S45C φ30×200",category:"シャフト",material:"S45C",size:"φ30×L200",client:"三和精機",price:3200,date:"2025-12-03",tags:["シャフト","丸棒","段付き"],shape:"shaft"},
+{id:3,number:"DWG-0287",name:"ブラケット L字型 100×60",category:"ブラケット",material:"SS400",size:"100×60×t6",client:"大阪金属工業",price:2100,date:"2025-10-28",tags:["ブラケット","L字","曲げ"],shape:"bracket-L"},
+{id:4,number:"DWG-0342",name:"フランジ B型 φ120",category:"フランジ",material:"SUS316",size:"φ120×t15",client:"東洋機械工業",price:7200,date:"2026-01-15",tags:["フランジ","丸型","穴8"],shape:"circle-8hole"},
+{id:5,number:"DWG-0298",name:"プレート 矩形 150×80",category:"プレート",material:"A5052",size:"150×80×t5",client:"山陽アルミ",price:1500,date:"2025-11-20",tags:["プレート","矩形","穴2"],shape:"plate-rect"},
+{id:6,number:"DWG-0356",name:"スペーサー φ40×30",category:"スペーサー",material:"SUS304",size:"φ40×L30",client:"三和精機",price:1800,date:"2026-02-05",tags:["スペーサー","円筒","中空"],shape:"spacer"},
+{id:7,number:"DWG-0310",name:"ブラケット コ字型 80×50",category:"ブラケット",material:"SS400",size:"80×50×t4.5",client:"新日本工機",price:2800,date:"2025-12-01",tags:["ブラケット","コ字","曲げ"],shape:"bracket-U"},
+{id:8,number:"DWG-0371",name:"フランジ C型 φ100",category:"フランジ",material:"SUS304",size:"φ100×t10",client:"関東バルブ",price:5500,date:"2026-02-22",tags:["フランジ","丸型","穴6"],shape:"circle-6hole"},
+{id:9,number:"DWG-0325",name:"シャフト SCM435 φ25×150",category:"シャフト",material:"SCM435",size:"φ25×L150",client:"松本精密",price:4100,date:"2025-12-18",tags:["シャフト","丸棒","キー溝"],shape:"shaft-key"},
+{id:10,number:"DWG-0389",name:"プレート 三角 120×100",category:"プレート",material:"SS400",size:"120×100×t8",client:"大阪金属工業",price:1900,date:"2026-03-10",tags:["プレート","三角","穴3"],shape:"plate-tri"},
+{id:11,number:"DWG-0401",name:"カラー φ50×20",category:"スペーサー",material:"S45C",size:"φ50×L20",client:"東洋機械工業",price:1200,date:"2026-03-18",tags:["カラー","円筒","中空"],shape:"spacer"},
+{id:12,number:"DWG-0278",name:"ブラケット 平型 90×40",category:"ブラケット",material:"A5052",size:"90×40×t3",client:"山陽アルミ",price:1600,date:"2025-10-15",tags:["ブラケット","平型","穴4"],shape:"bracket-flat"},
+];
+
+const SIM_MAP={
+"circle-4hole":{"circle-6hole":92,"circle-8hole":85,"spacer":58,"shaft":30,"bracket-L":15,"bracket-U":12,"bracket-flat":10,"plate-rect":20,"plate-tri":18,"shaft-key":28},
+"circle-6hole":{"circle-4hole":92,"circle-8hole":88,"spacer":55,"shaft":28,"bracket-L":14,"bracket-U":11,"bracket-flat":9,"plate-rect":19,"plate-tri":17,"shaft-key":26},
+"circle-8hole":{"circle-4hole":85,"circle-6hole":88,"spacer":52,"shaft":25,"bracket-L":13,"bracket-U":10,"bracket-flat":8,"plate-rect":18,"plate-tri":16,"shaft-key":24},
+"shaft":{"shaft-key":91,"spacer":62,"circle-4hole":30,"circle-6hole":28,"circle-8hole":25,"bracket-L":18,"bracket-U":20,"bracket-flat":15,"plate-rect":12,"plate-tri":10},
+"shaft-key":{"shaft":91,"spacer":60,"circle-4hole":28,"circle-6hole":26,"circle-8hole":24,"bracket-L":17,"bracket-U":19,"bracket-flat":14,"plate-rect":11,"plate-tri":9},
+"bracket-L":{"bracket-U":82,"bracket-flat":70,"plate-rect":45,"plate-tri":38,"circle-4hole":15,"circle-6hole":14,"circle-8hole":13,"shaft":18,"shaft-key":17,"spacer":12},
+"bracket-U":{"bracket-L":82,"bracket-flat":68,"plate-rect":42,"plate-tri":35,"circle-4hole":12,"circle-6hole":11,"circle-8hole":10,"shaft":20,"shaft-key":19,"spacer":14},
+"bracket-flat":{"bracket-L":70,"bracket-U":68,"plate-rect":55,"plate-tri":48,"circle-4hole":10,"circle-6hole":9,"circle-8hole":8,"shaft":15,"shaft-key":14,"spacer":11},
+"plate-rect":{"plate-tri":72,"bracket-flat":55,"bracket-L":45,"bracket-U":42,"circle-4hole":20,"circle-6hole":19,"circle-8hole":18,"shaft":12,"shaft-key":11,"spacer":15},
+"plate-tri":{"plate-rect":72,"bracket-flat":48,"bracket-L":38,"bracket-U":35,"circle-4hole":18,"circle-6hole":17,"circle-8hole":16,"shaft":10,"shaft-key":9,"spacer":13},
+"spacer":{"shaft":62,"shaft-key":60,"circle-4hole":58,"circle-6hole":55,"circle-8hole":52,"bracket-L":12,"bracket-U":14,"bracket-flat":11,"plate-rect":15,"plate-tri":13},
+};
+
+function thumbSVG(shape,sz=64){
+  const s=sz,cx=s/2,cy=s/2;
+  const st='stroke="currentColor" fill="none"';
+  const st2='stroke="currentColor" fill="none" opacity="0.5"';
+  const h={
+    "circle-4hole":`<circle cx="${cx}" cy="${cy}" r="${s*.38}" ${st} stroke-width="1.5"/><circle cx="${cx}" cy="${cy}" r="${s*.12}" ${st} stroke-width="1"/>`+[0,90,180,270].map(a=>{const r=s*.26,x=cx+r*Math.cos(a*Math.PI/180),y=cy+r*Math.sin(a*Math.PI/180);return`<circle cx="${x}" cy="${y}" r="3" ${st2} stroke-width=".8"/>`}).join(''),
+    "circle-6hole":`<circle cx="${cx}" cy="${cy}" r="${s*.38}" ${st} stroke-width="1.5"/><circle cx="${cx}" cy="${cy}" r="${s*.12}" ${st} stroke-width="1"/>`+[0,60,120,180,240,300].map(a=>{const r=s*.26,x=cx+r*Math.cos(a*Math.PI/180),y=cy+r*Math.sin(a*Math.PI/180);return`<circle cx="${x}" cy="${y}" r="3" ${st2} stroke-width=".8"/>`}).join(''),
+    "circle-8hole":`<circle cx="${cx}" cy="${cy}" r="${s*.38}" ${st} stroke-width="1.5"/><circle cx="${cx}" cy="${cy}" r="${s*.12}" ${st} stroke-width="1"/>`+[0,45,90,135,180,225,270,315].map(a=>{const r=s*.28,x=cx+r*Math.cos(a*Math.PI/180),y=cy+r*Math.sin(a*Math.PI/180);return`<circle cx="${x}" cy="${y}" r="2.5" ${st2} stroke-width=".8"/>`}).join(''),
+    "shaft":`<rect x="${s*.15}" y="${cy-s*.08}" width="${s*.7}" height="${s*.16}" ${st} stroke-width="1.5" rx="1"/><line x1="${cx}" y1="${cy-s*.15}" x2="${cx}" y2="${cy+s*.15}" ${st2} stroke-width=".5" stroke-dasharray="2 2"/><rect x="${s*.1}" y="${cy-s*.12}" width="${s*.18}" height="${s*.24}" ${st} stroke-width="1" rx="1"/>`,
+    "shaft-key":`<rect x="${s*.15}" y="${cy-s*.08}" width="${s*.7}" height="${s*.16}" ${st} stroke-width="1.5" rx="1"/><rect x="${s*.4}" y="${cy-s*.12}" width="${s*.15}" height="${s*.04}" fill="currentColor" opacity=".3"/><line x1="${cx}" y1="${cy-s*.15}" x2="${cx}" y2="${cy+s*.15}" ${st2} stroke-width=".5" stroke-dasharray="2 2"/>`,
+    "bracket-L":`<polyline points="${s*.25},${s*.2} ${s*.25},${s*.75} ${s*.75},${s*.75}" ${st} stroke-width="1.5"/><polyline points="${s*.35},${s*.2} ${s*.35},${s*.65} ${s*.75},${s*.65}" ${st} stroke-width="1.5"/><line x1="${s*.25}" y1="${s*.2}" x2="${s*.35}" y2="${s*.2}" ${st} stroke-width="1.5"/><line x1="${s*.75}" y1="${s*.65}" x2="${s*.75}" y2="${s*.75}" ${st} stroke-width="1.5"/>`,
+    "bracket-U":`<polyline points="${s*.2},${s*.25} ${s*.2},${s*.75} ${s*.8},${s*.75} ${s*.8},${s*.25}" ${st} stroke-width="1.5"/><polyline points="${s*.32},${s*.25} ${s*.32},${s*.63} ${s*.68},${s*.63} ${s*.68},${s*.25}" ${st} stroke-width="1.5"/><line x1="${s*.2}" y1="${s*.25}" x2="${s*.32}" y2="${s*.25}" ${st} stroke-width="1.5"/><line x1="${s*.68}" y1="${s*.25}" x2="${s*.8}" y2="${s*.25}" ${st} stroke-width="1.5"/>`,
+    "bracket-flat":`<rect x="${s*.15}" y="${s*.35}" width="${s*.7}" height="${s*.3}" ${st} stroke-width="1.5" rx="1"/>`+[s*.28,s*.43,s*.58,s*.73].map(x=>`<circle cx="${x}" cy="${cy}" r="3" ${st2} stroke-width=".8"/>`).join(''),
+    "plate-rect":`<rect x="${s*.18}" y="${s*.28}" width="${s*.64}" height="${s*.44}" ${st} stroke-width="1.5" rx="1"/><circle cx="${s*.32}" cy="${s*.42}" r="3" ${st2} stroke-width=".8"/><circle cx="${s*.68}" cy="${s*.58}" r="3" ${st2} stroke-width=".8"/>`,
+    "plate-tri":`<polygon points="${cx},${s*.22} ${s*.2},${s*.78} ${s*.8},${s*.78}" ${st} stroke-width="1.5"/>`+[[cx,s*.45],[s*.38,s*.65],[s*.62,s*.65]].map(([x,y])=>`<circle cx="${x}" cy="${y}" r="2.5" ${st2} stroke-width=".8"/>`).join(''),
+    "spacer":`<ellipse cx="${cx}" cy="${s*.3}" rx="${s*.28}" ry="${s*.1}" ${st} stroke-width="1.5"/><line x1="${s*.22}" y1="${s*.3}" x2="${s*.22}" y2="${s*.7}" ${st} stroke-width="1.5"/><line x1="${s*.78}" y1="${s*.3}" x2="${s*.78}" y2="${s*.7}" ${st} stroke-width="1.5"/><ellipse cx="${cx}" cy="${s*.7}" rx="${s*.28}" ry="${s*.1}" ${st} stroke-width="1.5"/><ellipse cx="${cx}" cy="${s*.3}" rx="${s*.12}" ry="${s*.045}" ${st2} stroke-width=".8"/>`,
+  };
+  return`<svg width="${s}" height="${s}" viewBox="0 0 ${s} ${s}" style="color:#666">${h[shape]||h["plate-rect"]}</svg>`;
+}
+
+function simColor(v){return v>=80?"#1D9E75":v>=50?"#BA7517":"#888"}
+
+let state={
+  tab:"search",search:"",filterCat:"すべて",minSim:0,
+  selected:null,results:null,searching:false,detail:null,
+  quote:[],toastTimer:null
+};
+
+function cats(){return["すべて",...new Set(DRAWINGS.map(d=>d.category))]}
+
+function filtered(){
+  let l=DRAWINGS;
+  if(state.search){const q=state.search.toLowerCase();l=l.filter(d=>d.name.toLowerCase().includes(q)||d.number.toLowerCase().includes(q)||d.material.toLowerCase().includes(q)||d.tags.some(t=>t.includes(q)))}
+  if(state.filterCat!=="すべて")l=l.filter(d=>d.category===state.filterCat);
+  return l;
+}
+
+function filteredResults(){
+  if(!state.results)return[];
+  let l=state.results;
+  if(state.filterCat!=="すべて")l=l.filter(d=>d.category===state.filterCat);
+  if(state.minSim>0)l=l.filter(d=>d.similarity>=state.minSim);
+  return l;
+}
+
+function doSearch(src){
+  state.selected=src;state.searching=true;state.results=null;
+  render();
+  setTimeout(()=>{
+    const sm=SIM_MAP[src.shape]||{};
+    state.results=DRAWINGS.filter(d=>d.id!==src.id).map(d=>({...d,similarity:sm[d.shape]||Math.floor(Math.random()*20+5)})).sort((a,b)=>b.similarity-a.similarity);
+    state.searching=false;state.tab="results";
+    render();
+  },1200);
+}
+
+function render(){
+  const app=document.getElementById("app");
+  const cl=cats();
+  const fl=filtered();
+  const fr=filteredResults();
+  const totalClients=new Set(DRAWINGS.map(d=>d.client)).size;
+  const totalCats=new Set(DRAWINGS.map(d=>d.category)).size;
+
+  let html=`
+  <div class="header">
+    <div class="logo"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></div>
+    <div><h1>AI 類似図面検索</h1><p>過去図面からAIが類似形状を瞬時に検索</p></div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="stat-label">登録図面</div><div class="stat-value">${DRAWINGS.length}<span> 件</span></div></div>
+    <div class="stat"><div class="stat-label">部品カテゴリ</div><div class="stat-value">${totalCats}<span> 種</span></div></div>
+    <div class="stat"><div class="stat-label">取引先</div><div class="stat-value">${totalClients}<span> 社</span></div></div>
+  </div>`;
+
+  if(state.searching){
+    html+=`<div class="drop-zone searching"><div class="dots"><span></span><span></span><span></span></div><h3 style="color:var(--accent)">AI解析中...</h3><p>図面の形状特徴を抽出しています</p></div>`;
+  }else{
+    html+=`<div class="drop-zone" id="dropZone" onclick="demoSearch()">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#999" stroke-width="1.5" style="opacity:.6"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+      <h3>図面をドラッグ＆ドロップ</h3>
+      <p>PDF, DXF, PNG, JPEG 対応 — またはクリックしてデモ検索</p>
+    </div>`;
+  }
+
+  if(state.selected&&state.results){
+    html+=`<div class="source-card">
+      <div class="source-thumb">${thumbSVG(state.selected.shape,56)}</div>
+      <div class="source-info">
+        <div class="label">検索元図面</div>
+        <div class="name">${state.selected.name}</div>
+        <div class="meta">${state.selected.number} · ${state.selected.material} · ${state.selected.size}</div>
+      </div>
+      <div class="source-count"><div class="num">${state.results.length}</div><div class="unit">件ヒット</div></div>
+    </div>`;
+  }
+
+  const qCount=state.quote.length;
+  html+=`<div class="tabs">
+    <button class="tab ${state.tab==="search"?"active":""}" onclick="switchTab('search')">図面一覧</button>
+    <button class="tab ${state.tab==="results"?"active":""}" onclick="switchTab('results')">検索結果${state.results?` (${fr.length})`:""}</button>
+    <button class="tab ${state.tab==="quote"?"active":""}" onclick="switchTab('quote')">見積${qCount>0?`<span class="tab-badge">${qCount}</span>`:""}</button>
+  </div>`;
+
+  if(state.tab!=="quote"){
+    html+=`<div class="filters">
+      <div class="search-input"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#999" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input type="text" placeholder="図面番号・名称・材質で検索..." value="${state.search}" oninput="updateSearch(this.value)"></div>
+      <div style="display:flex;gap:4px">${cl.map(c=>`<button class="cat-btn ${state.filterCat===c?"active":""}" onclick="setCat('${c}')">${c}</button>`).join('')}</div>
+      ${state.tab==="results"?`<div class="sim-filter"><span>類似度</span><input type="range" min="0" max="90" step="10" value="${state.minSim}" oninput="setMinSim(+this.value)"><span class="val">${state.minSim}%+</span></div>`:""}
+    </div>`;
+  }
+
+  if(state.tab==="search"){
+    html+=`<div class="grid">${fl.map(d=>`
+      <div class="card" onclick="openDetail(${d.id})">
+        <div class="card-thumb">${thumbSVG(d.shape,64)}</div>
+        <div class="card-name">${d.name}</div>
+        <div class="card-meta">${d.number} · ${d.material}</div>
+        <div class="card-footer">
+          <span class="card-cat">${d.category}</span>
+          <button class="card-search-btn" onclick="event.stopPropagation();searchById(${d.id})">類似検索</button>
+        </div>
+      </div>`).join('')}</div>`;
+    if(!fl.length)html+=`<div class="empty">該当する図面がありません</div>`;
+  }
+
+  if(state.tab==="results"){
+    if(!state.results){
+      html+=`<div class="empty">上のエリアに図面をドロップするか、図面一覧から「類似検索」を実行してください</div>`;
+    }else{
+      html+=fr.map((d,i)=>`
+        <div class="result-item" onclick="openDetail(${d.id},${d.similarity||0})">
+          <span class="result-rank">${i+1}</span>
+          <div class="result-thumb">${thumbSVG(d.shape,48)}</div>
+          <div class="result-info">
+            <div class="top"><span class="name">${d.name}</span><span class="cat">${d.category}</span></div>
+            <div class="detail">${d.number} · ${d.material} · ${d.size} · ${d.client}</div>
+          </div>
+          <div class="sim-bar-wrap">
+            <div class="sim-bar"><div class="sim-bar-fill" style="width:${d.similarity}%;background:${simColor(d.similarity)}"></div></div>
+            <span class="sim-pct" style="color:${simColor(d.similarity)}">${d.similarity}%</span>
+          </div>
+          <div class="result-price"><div class="price">¥${d.price.toLocaleString()}</div><div class="date">${d.date}</div></div>
+        </div>`).join('');
+      if(!fr.length)html+=`<div class="empty">条件に合う類似図面がありません</div>`;
+    }
+  }
+
+  if(state.tab==="quote"){
+    if(!state.quote.length){
+      html+=`<div class="empty" style="padding:4rem">見積に追加された図面がありません<br><span style="font-size:11px;margin-top:8px;display:block">図面詳細パネルから「見積に反映」で追加できます</span></div>`;
+    }else{
+      const items=state.quote.map(q=>{const d=DRAWINGS.find(x=>x.id===q.id);return{...d,qty:q.qty}});
+      const totalItems=items.reduce((s,i)=>s+i.qty,0);
+      const totalPrice=items.reduce((s,i)=>s+i.price*i.qty,0);
+      html+=items.map(d=>`
+        <div class="quote-item">
+          <div class="result-thumb">${thumbSVG(d.shape,44)}</div>
+          <div class="quote-item-info">
+            <div class="qname">${d.name}</div>
+            <div class="qmeta">${d.number} · ${d.material} · ${d.size}</div>
+            <div class="qmeta" style="margin-top:2px;color:var(--text3)">単価 ¥${d.price.toLocaleString()}</div>
+          </div>
+          <div class="qty-ctrl">
+            <button class="qty-btn" onclick="updateQty(${d.id},-1)">−</button>
+            <span class="qty-num">${d.qty}</span>
+            <button class="qty-btn" onclick="updateQty(${d.id},1)">＋</button>
+          </div>
+          <div class="quote-subtotal">
+            <div class="sub">¥${(d.price*d.qty).toLocaleString()}</div>
+            <div class="unit">${d.qty}個</div>
+          </div>
+          <button class="quote-del" title="削除" onclick="removeFromQuote(${d.id})">×</button>
+        </div>`).join('');
+      html+=`<div class="quote-footer">
+        <div class="quote-total-row"><span>小計 (${items.length}品目)</span><span>¥${totalPrice.toLocaleString()}</span></div>
+        <div class="quote-total-row"><span>数量合計</span><span>${totalItems} 個</span></div>
+        <div class="quote-total-row main"><span>合計金額</span><span>¥${totalPrice.toLocaleString()}</span></div>
+        <button class="quote-print-btn" onclick="printQuote()">見積書を印刷 / ダウンロード</button>
+      </div>`;
+    }
+  }
+
+  if(state.detail){
+    const d=state.detail;
+    html+=`<div class="overlay">
+      <div class="overlay-bg" onclick="closeDetail()"></div>
+      <div class="panel">
+        <div class="panel-header"><div><div class="num">${d.number}</div><h2>${d.name}</h2></div><button class="panel-close" onclick="closeDetail()">×</button></div>
+        <div class="panel-thumb">${thumbSVG(d.shape,120)}</div>
+        ${d._sim?`<div class="panel-sim"><div class="label">類似度</div><div class="sim-bar-wrap"><div class="sim-bar"><div class="sim-bar-fill" style="width:${d._sim}%;background:${simColor(d._sim)}"></div></div><span class="sim-pct" style="color:${simColor(d._sim)}">${d._sim}%</span></div></div>`:""}
+        <div class="panel-fields">
+          ${[["カテゴリ",d.category],["材質",d.material],["サイズ",d.size],["取引先",d.client],["単価","¥"+d.price.toLocaleString()],["日付",d.date]].map(([l,v])=>`<div class="panel-field"><span class="fl">${l}</span><span class="fv">${v}</span></div>`).join('')}
+        </div>
+        <div class="panel-tags"><div class="label">タグ</div><div class="tags">${d.tags.map(t=>`<span class="tag">${t}</span>`).join('')}</div></div>
+        <div class="panel-actions">
+          <button class="btn-primary" onclick="closeDetail();searchById(${d.id})">この図面で類似検索</button>
+          ${state.quote.some(q=>q.id===d.id)
+            ?`<button class="btn-green" onclick="switchTab('quote');closeDetail()">✓ 見積に追加済み</button>`
+            :`<button class="btn-secondary" onclick="addToQuote(${d.id})">見積に反映</button>`
+          }
+        </div>
+      </div>
+    </div>`;
+  }
+
+  app.innerHTML=html;
+
+  const dz=document.getElementById('dropZone');
+  if(dz){
+    dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('over')});
+    dz.addEventListener('dragleave',()=>dz.classList.remove('over'));
+    dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('over');demoSearch()});
+  }
+}
+
+function switchTab(t){state.tab=t;render()}
+function updateSearch(v){state.search=v;render()}
+function setCat(c){state.filterCat=c;render()}
+function setMinSim(v){state.minSim=v;render()}
+function demoSearch(){const r=DRAWINGS[Math.floor(Math.random()*DRAWINGS.length)];doSearch(r)}
+function searchById(id){const d=DRAWINGS.find(x=>x.id===id);if(d)doSearch(d)}
+function openDetail(id,sim){const d=DRAWINGS.find(x=>x.id===id);if(d){state.detail={...d,_sim:sim||0};render()}}
+function closeDetail(){state.detail=null;render()}
+function addToQuote(id){
+  if(!state.quote.some(q=>q.id===id))state.quote.push({id,qty:1});
+  showToast("見積に追加しました");render();
+}
+function removeFromQuote(id){state.quote=state.quote.filter(q=>q.id!==id);render()}
+function updateQty(id,delta){
+  const q=state.quote.find(q=>q.id===id);
+  if(q){q.qty=Math.max(1,q.qty+delta);render();}
+}
+function showToast(msg){
+  clearTimeout(state.toastTimer);
+  let t=document.getElementById('toast');
+  if(!t){t=document.createElement('div');t.id='toast';t.className='toast';document.body.appendChild(t);}
+  t.textContent=msg;t.classList.add('show');
+  state.toastTimer=setTimeout(()=>t.classList.remove('show'),2000);
+}
+function printQuote(){
+  const items=state.quote.map(q=>{const d=DRAWINGS.find(x=>x.id===q.id);return{...d,qty:q.qty}});
+  const totalPrice=items.reduce((s,i)=>s+i.price*i.qty,0);
+  const totalItems=items.reduce((s,i)=>s+i.qty,0);
+  const rows=items.map((d,i)=>`<tr><td>${i+1}</td><td>${d.number}</td><td>${d.name}</td><td>${d.material}</td><td>${d.size}</td><td style="text-align:right">${d.qty}</td><td style="text-align:right">¥${d.price.toLocaleString()}</td><td style="text-align:right">¥${(d.price*d.qty).toLocaleString()}</td></tr>`).join('');
+  const w=window.open('','_blank');
+  w.document.write(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>見積書</title><style>body{font-family:-apple-system,'Hiragino Sans',sans-serif;padding:32px;color:#1a1a1a}h1{font-size:20px;margin-bottom:4px}p{font-size:13px;color:#666;margin-bottom:24px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 10px;border:1px solid #ddd;text-align:left}th{background:#f5f5f5;font-weight:600}.total{font-size:16px;font-weight:700;margin-top:20px;text-align:right}</style></head><body><h1>見積書</h1><p>発行日: ${new Date().toLocaleDateString('ja-JP')} &nbsp;&nbsp; 品目数: ${items.length}種 &nbsp;&nbsp; 数量合計: ${totalItems}個</p><table><thead><tr><th>No.</th><th>図面番号</th><th>品名</th><th>材質</th><th>サイズ</th><th>数量</th><th>単価</th><th>金額</th></tr></thead><tbody>${rows}</tbody></table><p class="total">合計金額: ¥${totalPrice.toLocaleString()}</p></body></html>`);
+  w.document.close();w.print();
+}
+
+render();
+</script>
+</body>
+</html>
