@@ -2734,7 +2734,7 @@ function fbLoadInspectionFiles(){
   Object.keys(inspectionReports).forEach(function(drawingId){
     (inspectionReports[drawingId]||[]).forEach(function(r){
       if(r.fileId&&!r.data){
-        fbDB.collection('inspectionFiles').doc(r.fileId).get().then(function(doc){
+        fbDB.collection('workspaces').doc('insp_'+r.fileId).get().then(function(doc){
           if(doc.exists){r.data=doc.data().data;dbPut('meta','inspections',inspectionReports);}
         });
       }
@@ -2757,7 +2757,7 @@ function uploadInspection(drawingId){
         inspectionReports[drawingId].push(report);
         // Firestoreサブコレクションにファイルデータを保存（メイン文書は軽量に保つ）
         if(fbEnabled){
-          fbDB.collection('inspectionFiles').doc(fileId).set({drawingId:drawingId,name:f.name,date:report.date,type:f.type,data:data})
+          fbDB.collection('workspaces').doc('insp_'+fileId).set({drawingId:drawingId,name:f.name,date:report.date,type:f.type,data:data})
             .catch(function(err){console.warn('inspection file save failed:',err.message);});
         }
         saveAll();render();
