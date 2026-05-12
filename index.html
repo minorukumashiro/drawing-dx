@@ -657,8 +657,11 @@ function fbStartListener(){
         var incoming=data.inspections[id]||[];
         var existing=inspectionReports[id]||[];
         inspectionReports[id]=incoming.map(function(r){
-          var local=existing.find(function(x){return x.fileId&&x.fileId===r.fileId;});
-          return local?local:{name:r.name,date:r.date,type:r.type,fileId:r.fileId,data:''};
+          // fileIdで一致するローカルデータを優先（最新のアップロード済みデータ）
+          var local=r.fileId?existing.find(function(x){return x.fileId===r.fileId;}):null;
+          if(local)return local;
+          // 旧形式（dataフィールドがFirestoreに残っている）はそのまま使う
+          return {name:r.name,date:r.date,type:r.type,fileId:r.fileId||'',data:r.data||''};
         });
       });
       fbLoadInspectionFiles();
@@ -2776,6 +2779,7 @@ function viewInspection(drawingId,idx){
   var safeName=(r.name||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   var html;
   var src=r.url||r.data||'';
+  if(!src){alert('ファイルデータが見つかりません。\n一度削除してから再度アップロードしてください。');return;}
   if(r.type==='application/pdf'){
     html='\x3Chtml\x3E\x3Chead\x3E\x3Ctitle\x3E'+safeName+'\x3C/title\x3E\x3C/head\x3E\x3Cbody style="margin:0"\x3E\x3Cembed src="'+src+'" type="application/pdf" width="100%" height="100%" style="height:100vh"\x3E\x3C/body\x3E\x3C/html\x3E';
   }else{
