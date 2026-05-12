@@ -364,6 +364,7 @@ function loadData(){
         scannedPdfs=reqs.scannedPdfs.result||{};
         pdfThumbnails=reqs.pdfThumbs.result||{};
         inspectionReports=reqs.inspections.result||{};
+        deduplicateInspections();
 if(reqs.annotations.result)ANNOTATIONS=reqs.annotations.result;
         if(reqs.nextId.result)nextId=reqs.nextId.result;
         if(reqs.masters.result)MASTERS=reqs.masters.result;
@@ -477,6 +478,25 @@ function saveAll(skipImages){
   scheduleAutoSave();
 }
 
+// Remove duplicate/corrupted inspection entries (empty fileId or same fileId twice)
+function deduplicateInspections(){
+  var changed=false;
+  Object.keys(inspectionReports).forEach(function(id){
+    var orig=(inspectionReports[id]||[]);
+    var seen={};
+    var filtered=orig.filter(function(r){
+      if(!r.fileId)return false;
+      if(seen[r.fileId])return false;
+      seen[r.fileId]=true;
+      return true;
+    });
+    if(filtered.length!==orig.length){changed=true;}
+    if(filtered.length===0)delete inspectionReports[id];
+    else inspectionReports[id]=filtered;
+  });
+  return changed;
+}
+
 // ========== Firebase Sync Functions (metadata only, no images) ==========
 function inspMeta(){var r={};Object.keys(inspectionReports).forEach(function(id){r[id]=(inspectionReports[id]||[]).map(function(x){return{name:x.name,date:x.date,type:x.type,fileId:x.fileId||'',url:x.url||''};});});return r;}
 var fbMetaSyncing=false;
@@ -502,9 +522,8 @@ function fbPushAll(skipImages){
   updateSyncStatus('pushing');
   function pushMeta(){
     fbMetaSyncing=true;
-    var inspMeta={};Object.keys(inspectionReports).forEach(function(id){inspMeta[id]=(inspectionReports[id]||[]).map(function(x){return{name:x.name,date:x.date,type:x.type,url:x.url||'',storagePath:x.storagePath||''};});});
     var payload={
-      drawings:DRAWINGS,masters:MASTERS,inspections:inspMeta,
+      drawings:DRAWINGS,masters:MASTERS,inspections:inspMeta(),
       invoices:INVOICES,annotations:ANNOTATIONS,nextId:nextId,
       lastModified:firebase.firestore.FieldValue.serverTimestamp(),
       lastClient:fbClientId()
@@ -671,6 +690,11 @@ function fbStartListener(){
       Object.keys(inspectionReports).forEach(function(id){
         if(!data.inspections[id]||data.inspections[id].length===0)delete inspectionReports[id];
       });
+      // 重複・破損エントリを除去し、変化があればFirestoreにも書き戻す
+      if(deduplicateInspections()){
+        fbLastLocalChange=Date.now();
+        fbDB.collection('workspaces').doc('default').update({inspections:inspMeta(),lastModified:firebase.firestore.FieldValue.serverTimestamp()}).catch(function(e){console.warn('dedup push failed:',e.message);});
+      }
       fbLoadInspectionFiles();
     }
     if(data.invoices)INVOICES=data.invoices;
@@ -2754,6 +2778,8 @@ function uploadInspection(drawingId){
         var fileId=String(drawingId)+'_'+Date.now();
         var report={name:f.name,date:new Date().toISOString().slice(0,10),type:f.type,fileId:fileId,data:data};
         if(!inspectionReports[drawingId])inspectionReports[drawingId]=[];
+        // 同名ファイルが既に存在する場合は古いものを削除してから追加
+        inspectionReports[drawingId]=inspectionReports[drawingId].filter(function(x){return x.name!==f.name;});
         inspectionReports[drawingId].push(report);
         // Firestoreサブコレクションにファイルデータを保存（メイン文書は軽量に保つ）
         if(fbEnabled){
