@@ -647,7 +647,7 @@ function fbStartListener(){
     var data=doc.data();
     if(!data)return;
     // 自分のエコーのみ抑制（他デバイスの変更は常に適用）
-    if(data.lastClient===fbClientId()&&Date.now()-fbLastLocalChange<3000)return;
+    if(data.lastClient===fbClientId()&&Date.now()-fbLastLocalChange<15000)return;
     // Merge: server data overwrites local
     if(data.drawings){DRAWINGS=data.drawings;DRAWINGS.forEach(function(d){if(d.status==='検図中')d.status='検討中';});}
     if(data.masters){MASTERS=data.masters;if(MASTERS.statuses){var idx=MASTERS.statuses.indexOf('検図中');if(idx>=0)MASTERS.statuses[idx]='検討中';}}
@@ -656,13 +656,15 @@ function fbStartListener(){
       Object.keys(data.inspections).forEach(function(id){
         var incoming=data.inspections[id]||[];
         var existing=inspectionReports[id]||[];
-        inspectionReports[id]=incoming.map(function(r){
-          // fileIdで一致するローカルデータを優先（最新のアップロード済みデータ）
-          var local=r.fileId?existing.find(function(x){return x.fileId===r.fileId;}):null;
-          if(local)return local;
-          // 旧形式（dataフィールドがFirestoreに残っている）はそのまま使う
-          return {name:r.name,date:r.date,type:r.type,fileId:r.fileId||'',data:r.data||''};
+        // ローカルを基本に、Firestoreにしかない新規エントリを追加（ローカルは消さない）
+        var merged=existing.slice();
+        incoming.forEach(function(r){
+          var hasLocal=r.fileId?merged.some(function(x){return x.fileId===r.fileId;}):false;
+          if(!hasLocal){
+            merged.push({name:r.name,date:r.date,type:r.type,fileId:r.fileId||'',data:r.data||''});
+          }
         });
+        inspectionReports[id]=merged;
       });
       fbLoadInspectionFiles();
     }
