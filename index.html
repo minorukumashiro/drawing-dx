@@ -371,8 +371,10 @@ if(reqs.annotations.result)ANNOTATIONS=reqs.annotations.result;
         // Ensure 'その他' status exists
         if(MASTERS.statuses&&MASTERS.statuses.indexOf('その他')<0)MASTERS.statuses.push('その他');if(MASTERS.statuses&&MASTERS.statuses.indexOf('完了')<0){var ni=MASTERS.statuses.indexOf('納品済');if(ni>=0)MASTERS.statuses.splice(ni,0,'完了');else MASTERS.statuses.push('完了');}
         // Render NOW with metadata - don't wait for images
+        window._dbLoaded=true;
         render();
         checkUrlAndOpen();
+        startFbAfterLoad();
         // Load images from IndexedDB IN BACKGROUND
         var imgTx=db.transaction('images','readonly');
         var imgStore=imgTx.objectStore('images');
@@ -395,8 +397,10 @@ if(reqs.annotations.result)ANNOTATIONS=reqs.annotations.result;
     }else{
       loadFromLocalStorage();
       if(MASTERS.statuses&&MASTERS.statuses.indexOf('その他')<0)MASTERS.statuses.push('その他');if(MASTERS.statuses&&MASTERS.statuses.indexOf('完了')<0){var ni=MASTERS.statuses.indexOf('納品済');if(ni>=0)MASTERS.statuses.splice(ni,0,'完了');else MASTERS.statuses.push('完了');}
+      window._dbLoaded=true;
       render();
       checkUrlAndOpen();
+      startFbAfterLoad();
     }
   });
 }
@@ -995,22 +999,18 @@ try{
 
 loadData();
 }
-// Start Firebase realtime sync immediately (don't wait)
-if(fbEnabled){
-  setTimeout(function(){
-    try{fbStartListener();}catch(e){
-      console.error('Firebase start error:',e);
-      updateSyncStatus('offline','Firebase接続失敗: '+e.message);
-      return;
-    }
-    // If onSnapshot hasn't fired within 10s, mark offline
-    setTimeout(function(){
-      if(fbSyncState==='connecting')updateSyncStatus('offline','接続タイムアウト');
-    },10000);
-    // 8秒以内にsnapshotが来なければフラグを強制セット（push がブロックされないように）
-    setTimeout(function(){window._fbSnapshotReceived=true;},8000);
-  },200);
-}else if(!fbEnabled){
+// Start Firebase realtime sync AFTER IndexedDB has loaded (window._dbLoaded flag)
+function startFbAfterLoad(){
+  if(!fbEnabled)return;
+  try{fbStartListener();}catch(e){
+    console.error('Firebase start error:',e);
+    updateSyncStatus('offline','Firebase接続失敗: '+e.message);
+    return;
+  }
+  setTimeout(function(){if(fbSyncState==='connecting')updateSyncStatus('offline','接続タイムアウト');},10000);
+  setTimeout(function(){window._fbSnapshotReceived=true;},8000);
+}
+if(!fbEnabled){
   setTimeout(function(){updateSyncStatus('offline','Firebase未接続')},500);
 }
 function shapeSVG(s,sz){sz=sz||56;var c=sz/2,a='stroke="#888" fill="none" stroke-width="1.5"';var m={circle:'<circle cx="'+c+'" cy="'+c+'" r="'+(sz*.36)+'" '+a+'/>'+[0,90,180,270].map(function(d){var r=sz*.25;return'<circle cx="'+(c+r*Math.cos(d*Math.PI/180))+'" cy="'+(c+r*Math.sin(d*Math.PI/180))+'" r="2" stroke="#aaa" fill="none"/>'}).join(''),shaft:'<rect x="'+(sz*.14)+'" y="'+(c-sz*.08)+'" width="'+(sz*.72)+'" height="'+(sz*.16)+'" '+a+'/>',bracket:'<polyline points="'+(sz*.25)+','+(sz*.2)+' '+(sz*.25)+','+(sz*.78)+' '+(sz*.75)+','+(sz*.78)+'" '+a+'/>',plate:'<rect x="'+(sz*.16)+'" y="'+(sz*.26)+'" width="'+(sz*.68)+'" height="'+(sz*.48)+'" '+a+'/>',spacer:'<ellipse cx="'+c+'" cy="'+(sz*.32)+'" rx="'+(sz*.26)+'" ry="'+(sz*.09)+'" '+a+'/><line x1="'+(sz*.24)+'" y1="'+(sz*.32)+'" x2="'+(sz*.24)+'" y2="'+(sz*.68)+'" '+a+'/><line x1="'+(sz*.76)+'" y1="'+(sz*.32)+'" x2="'+(sz*.76)+'" y2="'+(sz*.68)+'" '+a+'/><ellipse cx="'+c+'" cy="'+(sz*.68)+'" rx="'+(sz*.26)+'" ry="'+(sz*.09)+'" '+a+'/>'};return'<svg width="'+sz+'" height="'+sz+'" viewBox="0 0 '+sz+' '+sz+'">'+(m[s]||m.plate)+'</svg>'}
