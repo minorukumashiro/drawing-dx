@@ -12,7 +12,6 @@
 <!-- Firebase SDK (v10 compat for global window usage) -->
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
 <script>if(typeof pdfjsLib!=='undefined'){pdfjsLib.GlobalWorkerOptions.workerSrc='';}</script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap');
@@ -197,7 +196,7 @@ var FIREBASE_CONFIG={
   messagingSenderId:"703086288375",
   appId:"1:703086288375:web:57a49db8932d4dae5462f2"
 };
-var fbApp=null,fbDB=null,fbStorage=null,fbEnabled=false,fbSyncing=false,fbUnsubscribe=null,fbLastLocalChange=0;
+var fbApp=null,fbDB=null,fbEnabled=false,fbSyncing=false,fbUnsubscribe=null,fbLastLocalChange=0;
 // Force re-sync all images on first push after this version (better quality)
 window._fbSyncedImages={};
 
@@ -260,7 +259,6 @@ try{
   if(typeof firebase!=='undefined'){
     fbApp=firebase.initializeApp(FIREBASE_CONFIG);
     fbDB=firebase.firestore();
-    fbStorage=firebase.storage();
     fbEnabled=true;
     console.log('Firebase initialized');
   }
@@ -654,7 +652,17 @@ function fbStartListener(){
     if(data.drawings){DRAWINGS=data.drawings;DRAWINGS.forEach(function(d){if(d.status==='検図中')d.status='検討中';});}
     if(data.masters){MASTERS=data.masters;if(MASTERS.statuses){var idx=MASTERS.statuses.indexOf('検図中');if(idx>=0)MASTERS.statuses[idx]='検討中';}}
     if(MASTERS.statuses&&MASTERS.statuses.indexOf('完了')<0){var _ni=MASTERS.statuses.indexOf('納品済');if(_ni>=0)MASTERS.statuses.splice(_ni,0,'完了');else MASTERS.statuses.push('完了');}
-    if(data.inspections)inspectionReports=data.inspections;
+    if(data.inspections){
+      Object.keys(data.inspections).forEach(function(id){
+        var incoming=data.inspections[id]||[];
+        var existing=inspectionReports[id]||[];
+        inspectionReports[id]=incoming.map(function(r){
+          var local=existing.find(function(x){return x.fileId&&x.fileId===r.fileId;});
+          return local?local:{name:r.name,date:r.date,type:r.type,fileId:r.fileId,data:''};
+        });
+      });
+      fbLoadInspectionFiles();
+    }
     if(data.invoices)INVOICES=data.invoices;
     if(data.annotations)ANNOTATIONS=data.annotations;
     if(data.nextId)nextId=Math.max(nextId,data.nextId);
@@ -2704,35 +2712,59 @@ function downloadDrawingFile(id){
   }
 }
 
+function compressImage(dataUrl,cb){
+  var img=new Image();
+  img.onload=function(){
+    var max=1200,w=img.width,h=img.height;
+    if(w>max||h>max){if(w>h){h=Math.round(h*max/w);w=max;}else{w=Math.round(w*max/h);h=max;}}
+    var c=document.createElement('canvas');c.width=w;c.height=h;
+    c.getContext('2d').drawImage(img,0,0,w,h);
+    cb(c.toDataURL('image/jpeg',0.82));
+  };
+  img.src=dataUrl;
+}
+function fbLoadInspectionFiles(){
+  if(!fbEnabled)return;
+  Object.keys(inspectionReports).forEach(function(drawingId){
+    (inspectionReports[drawingId]||[]).forEach(function(r){
+      if(r.fileId&&!r.data){
+        fbDB.collection('inspectionFiles').doc(r.fileId).get().then(function(doc){
+          if(doc.exists){r.data=doc.data().data;dbPut('meta','inspections',inspectionReports);}
+        });
+      }
+    });
+  });
+}
 function uploadInspection(drawingId){
   var input=document.createElement('input');
   input.type='file';
   input.accept='application/pdf,image/*';
   input.onchange=function(e){
     var f=e.target.files[0];if(!f)return;
-    if(fbStorage){
-      // Firebase Storageにアップロード（Firestoreの1MB制限回避）
-      var path='inspections/'+drawingId+'/'+Date.now()+'_'+f.name;
-      var ref=fbStorage.ref(path);
-      updateSyncStatus('pushing');
-      ref.put(f).then(function(snap){return snap.ref.getDownloadURL();}).then(function(url){
+    var reader=new FileReader();
+    reader.onload=function(ev){
+      var raw=ev.target.result;
+      function store(data){
+        var fileId=String(drawingId)+'_'+Date.now();
+        var report={name:f.name,date:new Date().toISOString().slice(0,10),type:f.type,fileId:fileId,data:data};
         if(!inspectionReports[drawingId])inspectionReports[drawingId]=[];
-        inspectionReports[drawingId].push({name:f.name,date:new Date().toISOString().slice(0,10),type:f.type,url:url,storagePath:path});
+        inspectionReports[drawingId].push(report);
+        // Firestoreサブコレクションにファイルデータを保存（メイン文書は軽量に保つ）
+        if(fbEnabled){
+          fbDB.collection('inspectionFiles').doc(fileId).set({drawingId:drawingId,name:f.name,date:report.date,type:f.type,data:data})
+            .catch(function(err){console.warn('inspection file save failed:',err.message);});
+        }
         saveAll();render();
-      }).catch(function(err){
-        alert('アップロード失敗: '+err.message);
-        updateSyncStatus('error',err.message);
-      });
-    }else{
-      // Firebase未接続時はローカル保存（このデバイスのみ）
-      var reader=new FileReader();
-      reader.onload=function(ev){
-        if(!inspectionReports[drawingId])inspectionReports[drawingId]=[];
-        inspectionReports[drawingId].push({name:f.name,date:new Date().toISOString().slice(0,10),type:f.type,data:ev.target.result});
-        saveAll();render();
-      };
-      reader.readAsDataURL(f);
-    }
+      }
+      if(f.type.startsWith('image/')){
+        compressImage(raw,store);
+      }else{
+        // PDF: 700KB超は警告
+        if(raw.length>950000){alert('PDFが大きすぎます（約'+Math.round(raw.length/1024)+'KB）。\n700KB以下のPDFか、画像形式でお試しください。');return;}
+        store(raw);
+      }
+    };
+    reader.readAsDataURL(f);
   };
   input.click();
 }
