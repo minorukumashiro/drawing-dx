@@ -474,6 +474,7 @@ function saveAll(skipImages){
 }
 
 // ========== Firebase Sync Functions (metadata only, no images) ==========
+function inspMeta(){var r={};Object.keys(inspectionReports).forEach(function(id){r[id]=(inspectionReports[id]||[]).map(function(x){return{name:x.name,date:x.date,type:x.type,fileId:x.fileId||'',url:x.url||''};});});return r;}
 var fbMetaSyncing=false;
 function fbPushAll(skipImages){
   if(!fbEnabled)return;
@@ -839,7 +840,7 @@ async function forcePushToFirebase(){
     window._fbSnapshotReceived=true;
     await fbPushImages();
     var payload={
-      drawings:DRAWINGS,masters:MASTERS,inspections:inspectionReports,
+      drawings:DRAWINGS,masters:MASTERS,inspections:inspMeta(),
       invoices:INVOICES,annotations:ANNOTATIONS,nextId:nextId,
       lastModified:firebase.firestore.FieldValue.serverTimestamp(),
       lastClient:fbClientId()
@@ -929,7 +930,7 @@ function importAllData(event){
         fbSyncing=false;
         updateSyncStatus('pushing');
         var _impPayload={
-          drawings:DRAWINGS,masters:MASTERS,inspections:inspectionReports,
+          drawings:DRAWINGS,masters:MASTERS,inspections:inspMeta(),
           invoices:INVOICES,annotations:ANNOTATIONS,nextId:nextId,
           lastModified:firebase.firestore.FieldValue.serverTimestamp(),
           lastClient:fbClientId()
