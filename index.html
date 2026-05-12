@@ -12,6 +12,7 @@
 <!-- Firebase SDK (v10 compat for global window usage) -->
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
 <script>if(typeof pdfjsLib!=='undefined'){pdfjsLib.GlobalWorkerOptions.workerSrc='';}</script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap');
@@ -196,7 +197,7 @@ var FIREBASE_CONFIG={
   messagingSenderId:"703086288375",
   appId:"1:703086288375:web:57a49db8932d4dae5462f2"
 };
-var fbApp=null,fbDB=null,fbEnabled=false,fbSyncing=false,fbUnsubscribe=null,fbLastLocalChange=0;
+var fbApp=null,fbDB=null,fbStorage=null,fbEnabled=false,fbSyncing=false,fbUnsubscribe=null,fbLastLocalChange=0;
 // Force re-sync all images on first push after this version (better quality)
 window._fbSyncedImages={};
 
@@ -259,6 +260,7 @@ try{
   if(typeof firebase!=='undefined'){
     fbApp=firebase.initializeApp(FIREBASE_CONFIG);
     fbDB=firebase.firestore();
+    fbStorage=firebase.storage();
     fbEnabled=true;
     console.log('Firebase initialized');
   }
@@ -497,8 +499,9 @@ function fbPushAll(skipImages){
   updateSyncStatus('pushing');
   function pushMeta(){
     fbMetaSyncing=true;
+    var inspMeta={};Object.keys(inspectionReports).forEach(function(id){inspMeta[id]=(inspectionReports[id]||[]).map(function(x){return{name:x.name,date:x.date,type:x.type,url:x.url||'',storagePath:x.storagePath||''};});});
     var payload={
-      drawings:DRAWINGS,masters:MASTERS,inspections:inspectionReports,
+      drawings:DRAWINGS,masters:MASTERS,inspections:inspMeta,
       invoices:INVOICES,annotations:ANNOTATIONS,nextId:nextId,
       lastModified:firebase.firestore.FieldValue.serverTimestamp(),
       lastClient:fbClientId()
@@ -2707,19 +2710,29 @@ function uploadInspection(drawingId){
   input.accept='application/pdf,image/*';
   input.onchange=function(e){
     var f=e.target.files[0];if(!f)return;
-    var reader=new FileReader();
-    reader.onload=function(ev){
-      if(!inspectionReports[drawingId])inspectionReports[drawingId]=[];
-      inspectionReports[drawingId].push({
-        name:f.name,
-        date:new Date().toISOString().slice(0,10),
-        type:f.type,
-        data:ev.target.result
+    if(fbStorage){
+      // Firebase Storageにアップロード（Firestoreの1MB制限回避）
+      var path='inspections/'+drawingId+'/'+Date.now()+'_'+f.name;
+      var ref=fbStorage.ref(path);
+      updateSyncStatus('pushing');
+      ref.put(f).then(function(snap){return snap.ref.getDownloadURL();}).then(function(url){
+        if(!inspectionReports[drawingId])inspectionReports[drawingId]=[];
+        inspectionReports[drawingId].push({name:f.name,date:new Date().toISOString().slice(0,10),type:f.type,url:url,storagePath:path});
+        saveAll();render();
+      }).catch(function(err){
+        alert('アップロード失敗: '+err.message);
+        updateSyncStatus('error',err.message);
       });
-      saveAll();
-      render();
-    };
-    reader.readAsDataURL(f);
+    }else{
+      // Firebase未接続時はローカル保存（このデバイスのみ）
+      var reader=new FileReader();
+      reader.onload=function(ev){
+        if(!inspectionReports[drawingId])inspectionReports[drawingId]=[];
+        inspectionReports[drawingId].push({name:f.name,date:new Date().toISOString().slice(0,10),type:f.type,data:ev.target.result});
+        saveAll();render();
+      };
+      reader.readAsDataURL(f);
+    }
   };
   input.click();
 }
@@ -2730,10 +2743,11 @@ function viewInspection(drawingId,idx){
   var w=window.open('','_blank');
   var safeName=(r.name||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   var html;
+  var src=r.url||r.data||'';
   if(r.type==='application/pdf'){
-    html='\x3Chtml\x3E\x3Chead\x3E\x3Ctitle\x3E'+safeName+'\x3C/title\x3E\x3C/head\x3E\x3Cbody style="margin:0"\x3E\x3Cembed src="'+r.data+'" type="application/pdf" width="100%" height="100%" style="height:100vh"\x3E\x3C/body\x3E\x3C/html\x3E';
+    html='\x3Chtml\x3E\x3Chead\x3E\x3Ctitle\x3E'+safeName+'\x3C/title\x3E\x3C/head\x3E\x3Cbody style="margin:0"\x3E\x3Cembed src="'+src+'" type="application/pdf" width="100%" height="100%" style="height:100vh"\x3E\x3C/body\x3E\x3C/html\x3E';
   }else{
-    html='\x3Chtml\x3E\x3Chead\x3E\x3Ctitle\x3E'+safeName+'\x3C/title\x3E\x3C/head\x3E\x3Cbody style="margin:0;background:#333;display:flex;align-items:center;justify-content:center;min-height:100vh"\x3E\x3Cimg src="'+r.data+'" style="max-width:100%;max-height:100vh"\x3E\x3C/body\x3E\x3C/html\x3E';
+    html='\x3Chtml\x3E\x3Chead\x3E\x3Ctitle\x3E'+safeName+'\x3C/title\x3E\x3C/head\x3E\x3Cbody style="margin:0;background:#333;display:flex;align-items:center;justify-content:center;min-height:100vh"\x3E\x3Cimg src="'+src+'" style="max-width:100%;max-height:100vh"\x3E\x3C/body\x3E\x3C/html\x3E';
   }
   w.document.write(html);
   w.document.close();
