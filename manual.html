@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>図面DXプラットフォーム 操作マニュアル</title>
+<style>
+:root{--ac:#0066cc;--bg:#ffffff;--bg2:#f5f5f7;--bg3:#e8e8ed;--tx:#1d1d1f;--tx2:#6e6e73;--tx3:#aeaeb2;--gn:#1B8C65;--rd:#c03030;--bd:#d2d2d7;--r:12px;--shadow:0 2px 12px rgba(0,0,0,.1)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Hiragino Sans','Noto Sans JP',sans-serif;background:var(--bg2);color:var(--tx);font-size:14px;line-height:1.6}
+.cover{background:linear-gradient(135deg,#1c1c2e 0%,#0066cc 100%);color:#fff;padding:48px 24px;text-align:center;print-color-adjust:exact;-webkit-print-color-adjust:exact}
+.cover-logo{display:inline-flex;align-items:center;gap:12px;background:rgba(255,255,255,.12);padding:12px 24px;border-radius:14px;margin-bottom:28px}
+.cover-logo svg{width:28px;height:28px}
+.cover h1{font-size:28px;font-weight:700;letter-spacing:-.5px;margin-bottom:8px}
+.cover p{font-size:14px;opacity:.75;margin-bottom:6px}
+.cover .ver{display:inline-block;background:rgba(255,255,255,.15);padding:4px 14px;border-radius:20px;font-size:12px;margin-top:16px}
+.container{max-width:860px;margin:0 auto;padding:24px 16px}
+.toc{background:var(--bg);border-radius:var(--r);padding:20px 24px;margin-bottom:28px;box-shadow:var(--shadow)}
+.toc h2{font-size:14px;font-weight:700;color:var(--tx2);margin-bottom:12px;text-transform:uppercase;letter-spacing:.5px}
+.toc ol{padding-left:20px;display:grid;grid-template-columns:1fr 1fr;gap:2px 24px}
+.toc li{font-size:13px;margin-bottom:3px}.toc a{color:var(--ac);text-decoration:none}.toc a:hover{text-decoration:underline}
+.section{background:var(--bg);border-radius:var(--r);padding:24px;margin-bottom:20px;box-shadow:var(--shadow)}
+.section-num{display:inline-block;background:var(--ac);color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;margin-bottom:10px}
+.section h2{font-size:20px;font-weight:700;margin-bottom:4px;color:var(--tx)}
+.section .lead{font-size:13px;color:var(--tx2);margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid var(--bd)}
+h3{font-size:15px;font-weight:700;margin:20px 0 8px;color:var(--tx);display:flex;align-items:center;gap:6px}
+h3::before{content:'';display:inline-block;width:4px;height:14px;background:var(--ac);border-radius:2px}
+p{margin-bottom:10px;color:var(--tx);font-size:13px}
+ul,ol{padding-left:20px;margin-bottom:12px}
+li{margin-bottom:4px;font-size:13px}
+.steps{counter-reset:step;list-style:none;padding-left:0}
+.steps li{counter-increment:step;padding:10px 14px 10px 44px;position:relative;background:var(--bg2);border-radius:8px;margin-bottom:8px;font-size:13px}
+.steps li::before{content:counter(step);position:absolute;left:10px;top:50%;transform:translateY(-50%);width:24px;height:24px;background:var(--ac);color:#fff;border-radius:50%;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600}
+.badge-blue{background:#e8f0fb;color:#0066cc}
+.badge-green{background:#e6f7f1;color:#1B8C65}
+.badge-red{background:#fce8e8;color:#c03030}
+.badge-gray{background:var(--bg2);color:var(--tx2)}
+.badge-purple{background:#f0ebff;color:#6E47A6}
+.badge-orange{background:#fff3e6;color:#a05010}
+.btn-demo{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:8px;font-size:12px;font-weight:600;border:1px solid var(--bd)}
+.btn-demo.ac{background:var(--ac);color:#fff;border-color:var(--ac)}
+.btn-demo.gn{background:var(--gn);color:#fff;border-color:var(--gn)}
+.btn-demo.gray{background:var(--bg2);color:var(--tx2)}
+.btn-demo.pur{background:#6E47A6;color:#fff;border-color:#6E47A6}
+.tip{background:#fffbe6;border-left:3px solid #f0ad4e;border-radius:6px;padding:10px 14px;margin:12px 0;font-size:12px;color:#7a5b00}
+.tip strong{color:#a06010}
+.warn{background:#fff0f0;border-left:3px solid var(--rd);border-radius:6px;padding:10px 14px;margin:12px 0;font-size:12px;color:#8b0000}
+.note{background:#e8f4fb;border-left:3px solid var(--ac);border-radius:6px;padding:10px 14px;margin:12px 0;font-size:12px;color:#004080}
+.key{display:inline-block;background:var(--bg3);border:1px solid var(--bd);border-radius:4px;padding:1px 7px;font-family:monospace;font-size:11px;color:var(--tx)}
+.card-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:14px 0}
+.card{background:var(--bg2);border:1px solid var(--bd);border-radius:10px;padding:14px;font-size:12px}
+.card .card-title{font-weight:700;font-size:13px;margin-bottom:6px;color:var(--tx)}
+.card .card-body{color:var(--tx2)}
+.table{width:100%;border-collapse:collapse;margin:12px 0;font-size:12px}
+.table th{background:var(--bg2);padding:8px 12px;text-align:left;font-weight:600;border-bottom:2px solid var(--bd);color:var(--tx2);font-size:11px;text-transform:uppercase}
+.table td{padding:8px 12px;border-bottom:1px solid var(--bd);vertical-align:top}
+.table tr:last-child td{border-bottom:none}
+.sync-arch{background:var(--bg2);border-radius:10px;padding:16px;margin:12px 0;text-align:center;font-size:12px}
+.sync-arch .devices{display:flex;justify-content:center;align-items:center;gap:24px;margin-bottom:12px;flex-wrap:wrap}
+.sync-arch .device{display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 18px;background:var(--bg);border-radius:10px;border:1px solid var(--bd);min-width:100px}
+.sync-arch .device svg{width:28px;height:28px;color:var(--ac)}
+.sync-arch .arrow{font-size:20px;color:var(--ac)}
+.sync-arch .cloud{font-size:28px;line-height:1}
+.divider{border:none;border-top:1px solid var(--bd);margin:20px 0}
+@media(max-width:600px){.toc ol{grid-template-columns:1fr}.cover h1{font-size:22px}.section{padding:16px}.card-row{grid-template-columns:1fr}}
+@media print{
+  body{background:#fff}
+  .cover{padding:32px 16px}
+  .section{box-shadow:none;border:1px solid var(--bd);break-inside:avoid}
+  .toc{box-shadow:none;border:1px solid var(--bd)}
+  a{color:var(--ac);text-decoration:none}
+  .tip,.warn,.note{print-color-adjust:exact;-webkit-print-color-adjust:exact}
+}
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="cover-logo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg>
+    <span style="font-weight:700;font-size:16px">図面DXプラットフォーム</span>
+  </div>
+  <h1>操作マニュアル</h1>
+  <p>AI図面管理・類似検索・検査報告書管理システム</p>
+  <p style="font-size:12px;opacity:.6">東京ホーニング株式会社</p>
+  <span class="ver">2026年5月版</span>
+</div>
+
+<div class="container">
+
+<!-- 目次 -->
+<div class="toc">
+  <h2>目次</h2>
+  <ol>
+    <li><a href="#s1">システム概要</a></li>
+    <li><a href="#s2">画面構成・タブ説明</a></li>
+    <li><a href="#s3">図面登録（AI-OCR）</a></li>
+    <li><a href="#s4">図面一覧・検索・フィルター</a></li>
+    <li><a href="#s5">図面詳細パネル</a></li>
+    <li><a href="#s6">検査報告書</a></li>
+    <li><a href="#s7">図面書込・スタンプ</a></li>
+    <li><a href="#s8">帳票（見積書・注文書）</a></li>
+    <li><a href="#s9">スマホとの同期</a></li>
+    <li><a href="#s10">バックアップ・復元</a></li>
+    <li><a href="#s11">マスター管理</a></li>
+    <li><a href="#s12">よくある質問</a></li>
+  </ol>
+</div>
+
+<!-- 1. システム概要 -->
+<div class="section" id="s1">
+  <span class="section-num">1</span>
+  <h2>システム概要</h2>
+  <p class="lead">図面DXプラットフォームは、製造現場の図面をデジタル管理するシステムです。PCで管理した内容がリアルタイムでスマホに同期されます。</p>
+
+  <h3>主な機能</h3>
+  <div class="card-row">
+    <div class="card"><div class="card-title">📄 図面管理</div><div class="card-body">図面のスキャン画像・PDFを登録し、番号・材質・取引先などで管理します</div></div>
+    <div class="card"><div class="card-title">🤖 AI-OCR読取</div><div class="card-body">図面画像から図面番号・材質・サイズなどを自動読み取りして登録します</div></div>
+    <div class="card"><div class="card-title">🔍 類似検索</div><div class="card-body">図面の形状・材質などから類似図面を自動検索します</div></div>
+    <div class="card"><div class="card-title">📋 検査報告書</div><div class="card-body">PDFや画像の検査報告書を各図面に紐づけて管理します</div></div>
+    <div class="card"><div class="card-title">✏️ 書込・スタンプ</div><div class="card-body">図面にスタンプ・テキスト・線などを書き込み印刷できます</div></div>
+    <div class="card"><div class="card-title">📱 スマホ同期</div><div class="card-body">Firebaseを使いPC↔スマホをリアルタイム同期します</div></div>
+  </div>
+
+  <h3>アクセス方法</h3>
+  <table class="table">
+    <tr><th>環境</th><th>URL・場所</th><th>特徴</th></tr>
+    <tr><td><strong>PC（メイン）</strong></td><td><span class="key">file:///C:/Users/ths-4/Desktop/drawing-dx/index.html</span></td><td>全機能が使用可能。画像登録・書込・帳票など</td></tr>
+    <tr><td><strong>スマホ・外出先</strong></td><td><span class="key">https://minorukumashiro.github.io/drawing-dx/</span></td><td>PCのデータを参照・ステータス変更が可能</td></tr>
+  </table>
+
+  <div class="note">スマホ版はPCからデータを受信して表示します。図面の登録・削除はPC側で行ってください。</div>
+</div>
+
+<!-- 2. 画面構成 -->
+<div class="section" id="s2">
+  <span class="section-num">2</span>
+  <h2>画面構成・タブ説明</h2>
+  <p class="lead">画面上部のタブで表示内容を切り替えます。</p>
+
+  <table class="table">
+    <tr><th>タブ名</th><th>内容</th><th>スマホ</th></tr>
+    <tr><td><span class="badge badge-blue">案件ボード</span></td><td>図面をカード形式で表示。KPI（件数・単価合計など）も確認できます</td><td>○</td></tr>
+    <tr><td><span class="badge badge-blue">図面一覧</span></td><td>図面を一覧表示。検索・フィルターで絞り込み可能</td><td>○</td></tr>
+    <tr><td><span class="badge badge-gray">マスター管理</span></td><td>カテゴリ・材質・取引先などのマスターデータを管理</td><td>×（PC専用）</td></tr>
+  </table>
+
+  <h3>ヘッダーボタン</h3>
+  <table class="table">
+    <tr><th>ボタン</th><th>機能</th></tr>
+    <tr><td><span class="btn-demo ac">+ 図面登録</span></td><td>新しい図面を1件登録します（AI-OCR対応）</td></tr>
+    <tr><td><span class="btn-demo pur">📚 一括登録</span></td><td>複数の図面ファイルをまとめて登録します</td></tr>
+    <tr><td><span class="btn-demo gray">☁ ALRITインポート</span></td><td>ALRITからエクスポートしたZIPファイルを取込みます</td></tr>
+    <tr><td><span class="btn-demo gray">🔍 図面確認</span></td><td>登録済み図面の重複チェック・確認を行います</td></tr>
+    <tr><td><span class="btn-demo gn">📤 全データ送信</span></td><td>PCのデータをFirebase経由でスマホに強制送信します</td></tr>
+  </table>
+
+  <h3>同期ステータス表示</h3>
+  <p>画面右上に同期状態が表示されます。</p>
+  <table class="table">
+    <tr><th>表示</th><th>意味</th></tr>
+    <tr><td>🟢 同期済</td><td>PCとFirebaseが最新状態で一致しています</td></tr>
+    <tr><td>🔵 送信中</td><td>データをFirebaseに送信しています</td></tr>
+    <tr><td>🔴 オフライン</td><td>ネットワーク未接続。ローカル作業は可能です</td></tr>
+  </table>
+</div>
+
+<!-- 3. 図面登録 -->
+<div class="section" id="s3">
+  <span class="section-num">3</span>
+  <h2>図面登録（AI-OCR）</h2>
+  <p class="lead">スキャン画像やPDFをアップロードすると、AIが図面番号・材質・サイズを自動読み取りします。</p>
+
+  <h3>登録手順</h3>
+  <ol class="steps">
+    <li>ヘッダーの <span class="btn-demo ac">+ 図面登録</span> をクリック</li>
+    <li>「スキャン図面をアップロード」エリアに<strong>画像ファイル（PNG/JPEG）またはPDF</strong>をドラッグ＆ドロップ（またはクリックして選択）</li>
+    <li>AIが自動で図面番号・材質・サイズなどを読み取ります（<span class="badge badge-blue">OCR</span>マークが付いた項目が自動入力）</li>
+    <li>内容を確認・修正して <span class="btn-demo ac">登録</span> をクリック</li>
+  </ol>
+
+  <h3>入力項目</h3>
+  <table class="table">
+    <tr><th>項目</th><th>必須</th><th>説明</th></tr>
+    <tr><td>図面番号</td><td><span class="badge badge-red">必須</span></td><td>例：KF2301-02011A（OCRで自動入力される場合あり）</td></tr>
+    <tr><td>図面名称</td><td><span class="badge badge-red">必須</span></td><td>部品名など</td></tr>
+    <tr><td>材質</td><td>任意</td><td>例：SUS420、SKD11（マスターから候補表示）</td></tr>
+    <tr><td>サイズ</td><td>任意</td><td>例：φ50×100</td></tr>
+    <tr><td>取引先</td><td>任意</td><td>例：青海製作所（マスターから候補表示）</td></tr>
+    <tr><td>単価</td><td>任意</td><td>帳票生成に使用</td></tr>
+    <tr><td>ステータス</td><td>任意</td><td>検討中・見積済・製造中・完了・納品済など</td></tr>
+    <tr><td>優先度</td><td>任意</td><td>高・中・低</td></tr>
+    <tr><td>タグ</td><td>任意</td><td>カンマ区切りで複数指定可（例：急ぎ,要確認）</td></tr>
+  </table>
+
+  <div class="tip"><strong>ヒント：</strong>OCRの読取精度は図面の画質に依存します。薄い文字や斜めスキャンは手動修正してください。</div>
+
+  <h3>一括登録</h3>
+  <p><span class="btn-demo pur">📚 一括登録</span> をクリックすると複数ファイルを同時にアップロードできます。各ファイルに対してOCRが実行されます。</p>
+</div>
+
+<!-- 4. 図面一覧 -->
+<div class="section" id="s4">
+  <span class="section-num">4</span>
+  <h2>図面一覧・検索・フィルター</h2>
+  <p class="lead">「図面一覧」タブで全図面を確認し、キーワード検索やフィルターで絞り込みができます。</p>
+
+  <h3>検索</h3>
+  <p>画面上部の検索ボックスに図面番号・名称・取引先・材質などのキーワードを入力するとリアルタイムで絞り込まれます。</p>
+
+  <h3>フィルター</h3>
+  <table class="table">
+    <tr><th>フィルター</th><th>機能</th></tr>
+    <tr><td>カテゴリボタン</td><td>カテゴリ別に絞り込み（全て／ギア／シャフトなど）</td></tr>
+    <tr><td>スキャン済のみ</td><td>図面ファイルが登録されているもののみ表示</td></tr>
+    <tr><td>ステータス</td><td>特定のステータスのみ表示</td></tr>
+  </table>
+
+  <h3>表示モード</h3>
+  <table class="table">
+    <tr><th>モード</th><th>特徴</th></tr>
+    <tr><td>グリッド表示</td><td>サムネイル画像付きカード形式。図面の内容を視覚的に確認できます</td></tr>
+    <tr><td>リスト表示</td><td>一覧表形式。大量の図面を効率的に管理できます</td></tr>
+  </table>
+
+  <h3>図面カードのボタン</h3>
+  <table class="table">
+    <tr><th>ボタン</th><th>機能</th></tr>
+    <tr><td>書込</td><td>図面書込・スタンプ画面を開きます</td></tr>
+    <tr><td>帳票</td><td>見積書・注文書などを生成します</td></tr>
+    <tr><td>類似検索</td><td>この図面に類似した図面を検索します</td></tr>
+  </table>
+</div>
+
+<!-- 5. 図面詳細 -->
+<div class="section" id="s5">
+  <span class="section-num">5</span>
+  <h2>図面詳細パネル</h2>
+  <p class="lead">図面カードをクリックすると右側に詳細パネルが開きます。</p>
+
+  <h3>表示情報</h3>
+  <ul>
+    <li>図面番号・図面名称</li>
+    <li>スキャン済バッジ（図面ファイル登録済の場合）</li>
+    <li>サムネイル画像（クリックでダウンロード）</li>
+    <li>類似度バー（類似検索結果の場合）</li>
+    <li>カテゴリ・材質・サイズ・取引先・単価・ステータス</li>
+    <li>数量・納期（製造中・完了・納品済ステータスの場合）</li>
+    <li>タグ一覧</li>
+    <li>検査報告書一覧</li>
+  </ul>
+
+  <h3>操作ボタン</h3>
+  <table class="table">
+    <tr><th>ボタン</th><th>機能</th></tr>
+    <tr><td>類似検索</td><td>この図面に類似した図面を検索します</td></tr>
+    <tr><td>帳票</td><td>見積書・注文書などを生成します</td></tr>
+    <tr><td>書込</td><td>図面書込・スタンプ画面を開きます</td></tr>
+    <tr><td>編集</td><td>図面情報（番号・名称・材質など）を修正します</td></tr>
+    <tr><td>情報印刷</td><td>図面の情報シートを印刷します</td></tr>
+    <tr><td>図面印刷</td><td>スキャン画像・PDFを印刷します</td></tr>
+    <tr><td>削除</td><td>図面を完全に削除します（確認ダイアログあり）</td></tr>
+  </table>
+
+  <div class="warn"><strong>注意：</strong>削除は取り消せません。誤って削除した場合は「Firebaseから強制復元」またはバックアップから復元してください。</div>
+</div>
+
+<!-- 6. 検査報告書 -->
+<div class="section" id="s6">
+  <span class="section-num">6</span>
+  <h2>検査報告書</h2>
+  <p class="lead">各図面に検査報告書（PDF・画像）を添付して管理します。スマホからも閲覧できます。</p>
+
+  <h3>検査報告書のアップロード</h3>
+  <ol class="steps">
+    <li>図面詳細パネルを開く（図面カードをクリック）</li>
+    <li>「📋 検査報告書」欄の <span class="btn-demo ac">+ 追加</span> をクリック</li>
+    <li>ファイル選択ダイアログでPDFまたは画像ファイルを選択</li>
+    <li>同期ステータスが「🟢 同期済」になるまで待つ（数秒〜10秒）</li>
+  </ol>
+
+  <div class="tip"><strong>ヒント：</strong>PDFは700KB以下を推奨します。大きいPDFは画像（JPEG/PNG）に変換してからアップロードしてください。</div>
+  <div class="note"><strong>同名ファイルについて：</strong>同じファイル名でアップロードすると、古いファイルは自動的に置き換えられます。</div>
+
+  <h3>検査報告書の表示</h3>
+  <ol class="steps">
+    <li>図面詳細パネルの「📋 検査報告書」欄でファイルを確認</li>
+    <li><span class="btn-demo ac">表示</span> ボタンをクリック</li>
+    <li>新しいタブでPDF・画像が開きます</li>
+  </ol>
+
+  <h3>検査報告書の削除</h3>
+  <p>ファイル名の右にある <span class="btn-demo" style="background:#fce8e8;color:#c03030;border-color:#fce8e8">×</span> ボタンをクリックすると削除されます。確認ダイアログが表示されます。</p>
+
+  <h3>スマホで閲覧する場合</h3>
+  <p>PCでアップロード後、スマホのブラウザで <span class="key">https://minorukumashiro.github.io/drawing-dx/</span> を開き、対象の図面を選んで「表示」ボタンをタップします。</p>
+
+  <div class="tip"><strong>スマホで表示できない場合：</strong>PCで「📤 全データ送信」ボタンを押してからスマホのページを再読み込みしてください。</div>
+</div>
+
+<!-- 7. 図面書込 -->
+<div class="section" id="s7">
+  <span class="section-num">7</span>
+  <h2>図面書込・スタンプ</h2>
+  <p class="lead">図面画像にスタンプ・テキスト・線を書き込んで印刷できます。</p>
+
+  <h3>書込の開始</h3>
+  <p>図面詳細パネルまたは一覧の <span class="btn-demo gray">書込</span> ボタンをクリックすると「図面書込・スタンプ」タブが開きます。</p>
+
+  <h3>書込ツール</h3>
+  <table class="table">
+    <tr><th>ツール</th><th>操作方法</th></tr>
+    <tr><td>スタンプ</td><td>スタンプの種類を選んで図面上をクリックして配置</td></tr>
+    <tr><td>テキスト</td><td>テキストツールを選んで図面上をクリックして文字を入力</td></tr>
+    <tr><td>線・矢印</td><td>ドラッグして線を引く</td></tr>
+    <tr><td>消しゴム</td><td>書き込みをクリックして削除</td></tr>
+  </table>
+
+  <h3>ページ切替（複数ページ図面）</h3>
+  <p>◀ ▶ ボタンでページを切り替えられます。</p>
+
+  <h3>保存・印刷</h3>
+  <ul>
+    <li><strong>画像として保存</strong>：書き込み込みの図面をPNG画像でダウンロード</li>
+    <li><strong>印刷</strong>：書き込み込みの図面を印刷</li>
+  </ul>
+</div>
+
+<!-- 8. 帳票 -->
+<div class="section" id="s8">
+  <span class="section-num">8</span>
+  <h2>帳票（見積書・注文書）</h2>
+  <p class="lead">登録した図面の情報をもとに見積書・注文書を自動生成して印刷・保存できます。</p>
+
+  <h3>帳票の生成手順</h3>
+  <ol class="steps">
+    <li>図面詳細パネルの <span class="btn-demo gray">帳票</span> ボタンをクリック（または「帳票」タブを開く）</li>
+    <li>帳票の種類を選択（見積書・注文書・納品書など）</li>
+    <li>図面・数量・単価を確認・入力</li>
+    <li><span class="btn-demo ac">生成</span> ボタンをクリック</li>
+    <li><span class="btn-demo gray">印刷</span> または <span class="btn-demo gray">HTMLダウンロード</span> で出力</li>
+  </ol>
+
+  <div class="tip"><strong>ヒント：</strong>単価は図面登録時に設定しておくと自動入力されます。後から「編集」で変更できます。</div>
+</div>
+
+<!-- 9. スマホ同期 -->
+<div class="section" id="s9">
+  <span class="section-num">9</span>
+  <h2>スマホとの同期</h2>
+  <p class="lead">PC↔スマホはFirebase（Googleのクラウドサービス）を経由してリアルタイムに同期します。</p>
+
+  <div class="sync-arch">
+    <div class="devices">
+      <div class="device">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        <strong>PC</strong>
+        <span style="font-size:11px;color:var(--tx2)">登録・管理</span>
+      </div>
+      <div>
+        <div class="arrow">⇄</div>
+        <div class="cloud">☁️</div>
+        <div style="font-size:11px;color:var(--tx2);margin-top:4px">Firebase</div>
+      </div>
+      <div class="device">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="2" width="14" height="20" rx="2"/><circle cx="12" cy="17" r="1"/></svg>
+        <strong>スマホ</strong>
+        <span style="font-size:11px;color:var(--tx2)">参照・確認</span>
+      </div>
+    </div>
+    <p style="font-size:12px;color:var(--tx2)">データ変更時に自動的にFirebase経由で同期されます</p>
+  </div>
+
+  <h3>スマホで閲覧する方法</h3>
+  <ol class="steps">
+    <li>スマホのブラウザで <span class="key">https://minorukumashiro.github.io/drawing-dx/</span> を開く</li>
+    <li>初回はページが読み込まれるまで数秒待つ</li>
+    <li>PCと同じ図面一覧・案件ボードが表示される</li>
+  </ol>
+
+  <h3>スマホでできること</h3>
+  <ul>
+    <li>図面一覧・案件ボードの閲覧</li>
+    <li>検査報告書の表示</li>
+    <li>ステータスの変更（製造中→完了 など）</li>
+    <li>図面書込（スタンプ・テキスト）</li>
+  </ul>
+
+  <h3>PCに反映させる（スマホ→PC）</h3>
+  <p>スマホでステータス変更などを行った場合、PCのページを再読み込み（<span class="key">F5</span>）すると自動的に反映されます。</p>
+
+  <h3>強制同期ボタン</h3>
+  <table class="table">
+    <tr><th>ボタン</th><th>場所</th><th>用途</th></tr>
+    <tr><td>📤 全データ送信</td><td>PCヘッダー</td><td>PCのデータをFirebaseに強制的に書き込む。スマホに届かない時に使用</td></tr>
+    <tr><td>⚠ Firebaseから強制復元</td><td>マスター管理タブ</td><td>FirebaseのデータでPCのデータを上書き復元する</td></tr>
+  </table>
+
+  <div class="warn"><strong>注意：</strong>「Firebaseから強制復元」を実行するとPC側のデータがFirebaseの内容に上書きされます。PCのデータが最新の場合は使用しないでください。</div>
+</div>
+
+<!-- 10. バックアップ -->
+<div class="section" id="s10">
+  <span class="section-num">10</span>
+  <h2>バックアップ・復元</h2>
+  <p class="lead">重要なデータを定期的にバックアップすることを推奨します。</p>
+
+  <h3>エクスポート（バックアップ）</h3>
+  <ol class="steps">
+    <li>「マスター管理」タブを開く</li>
+    <li><span class="btn-demo gray">📤 エクスポート（バックアップ）</span> をクリック</li>
+    <li>JSONファイルがダウンロードフォルダに保存されます</li>
+  </ol>
+
+  <h3>インポート（復元）</h3>
+  <ol class="steps">
+    <li>「マスター管理」タブを開く</li>
+    <li><span class="btn-demo gray">📥 インポート（復元）</span> をクリック</li>
+    <li>保存しておいたJSONファイルを選択</li>
+    <li>データが復元されます</li>
+  </ol>
+
+  <h3>自動バックアップの設定</h3>
+  <p>「マスター管理」タブで <span class="btn-demo ac">📂 保存先を設定</span> をクリックし、保存フォルダを指定すると、データ変更のたびに自動でJSONファイルが上書き保存されます。</p>
+
+  <div class="tip"><strong>推奨：</strong>Alrit共有フォルダや社内サーバーを保存先に設定しておくと安全です。</div>
+
+  <h3>データ保存の仕組み</h3>
+  <table class="table">
+    <tr><th>保存場所</th><th>役割</th><th>備考</th></tr>
+    <tr><td>IndexedDB（ブラウザ内）</td><td>メインデータ（図面・画像すべて）</td><td>ブラウザを閉じても保持される</td></tr>
+    <tr><td>Firebase（クラウド）</td><td>スマホ同期用のメタデータ</td><td>画像データも同期される</td></tr>
+    <tr><td>JSONファイル</td><td>バックアップ</td><td>手動エクスポートまたは自動保存</td></tr>
+  </table>
+</div>
+
+<!-- 11. マスター管理 -->
+<div class="section" id="s11">
+  <span class="section-num">11</span>
+  <h2>マスター管理</h2>
+  <p class="lead">図面登録フォームで使用する選択肢（カテゴリ・材質・取引先など）を管理します。</p>
+
+  <h3>マスターの種類</h3>
+  <table class="table">
+    <tr><th>マスター名</th><th>用途</th><th>例</th></tr>
+    <tr><td>カテゴリ</td><td>図面の分類</td><td>ギア、シャフト、ブラケット</td></tr>
+    <tr><td>材質</td><td>素材の選択肢</td><td>SUS420、SKD11、S45C</td></tr>
+    <tr><td>取引先</td><td>発注先・顧客</td><td>青海製作所、山田製作所</td></tr>
+    <tr><td>ステータス</td><td>案件の進捗</td><td>検討中、見積済、製造中、完了、納品済</td></tr>
+    <tr><td>表面処理</td><td>処理方法</td><td>硬質クロム、窒化処理</td></tr>
+    <tr><td>形状</td><td>部品の形状（値と表示名）</td><td>gear→ギア、shaft→シャフト</td></tr>
+  </table>
+
+  <h3>マスターの追加・削除</h3>
+  <ol class="steps">
+    <li>「マスター管理」タブを開く</li>
+    <li>追加したいマスターの入力欄に名称を入力</li>
+    <li><span class="btn-demo ac">追加</span> をクリック</li>
+    <li>削除する場合はマスター名の右の <span class="btn-demo" style="color:#c03030;border-color:#fce8e8;background:#fce8e8">×</span> をクリック</li>
+  </ol>
+
+  <h3>登録図面からの一括取込</h3>
+  <p>「マスター管理」タブの <span class="btn-demo gray">登録図面から取込</span> をクリックすると、既存の図面に使われている材質・取引先などを自動的にマスターに追加できます。</p>
+</div>
+
+<!-- 12. FAQ -->
+<div class="section" id="s12">
+  <span class="section-num">12</span>
+  <h2>よくある質問</h2>
+
+  <h3>Q. スマホで図面が表示されない</h3>
+  <p>PCで <span class="btn-demo gn">📤 全データ送信</span> ボタンを押してから、スマホのブラウザを再読み込みしてください。それでも表示されない場合はWi-Fiの接続を確認してください。</p>
+
+  <h3>Q. 検査報告書の「表示」ボタンを押すと「データが見つかりません」と出る</h3>
+  <p>一度削除してから再度アップロードしてください。アップロード後に同期ステータスが「🟢 同期済」になったことを確認してください。</p>
+
+  <h3>Q. アップロードした検査報告書が翌日消えてしまった</h3>
+  <p>アップロード後に同期ステータスが「🟢 同期済」になる前にページを閉じた可能性があります。アップロード後は緑のマークが出るまで（通常10秒以内）待ってからページを閉じてください。</p>
+
+  <h3>Q. 図面が重複して登録されてしまった</h3>
+  <p>一覧から古い方の図面を選んで詳細パネルの「削除」ボタンで削除してください。</p>
+
+  <h3>Q. データを誤って削除してしまった</h3>
+  <p>マスター管理タブの <span class="btn-demo gray">⚠ Firebaseから強制復元</span> またはバックアップJSONの <span class="btn-demo gray">📥 インポート（復元）</span> で復元できます。</p>
+
+  <h3>Q. PDFがアップロードできない（エラーが出る）</h3>
+  <p>PDFのファイルサイズが大きすぎます（700KB超）。AdobeAcrobatなどで圧縮するか、スキャン画像（JPEG）として保存してからアップロードしてください。</p>
+
+  <h3>Q. 同期ステータスが「🔴 オフライン」のまま</h3>
+  <p>インターネット接続を確認してください。オフラインでもローカル（PC単体）での作業は可能です。ネット接続が回復すると自動的に同期されます。</p>
+
+  <h3>Q. OCRの読み取り精度が低い</h3>
+  <p>以下の点を確認してください：①スキャン解像度を300dpi以上にする、②傾きなく水平にスキャンする、③汚れや影のない鮮明な画像を使用する。OCR結果は手動で修正可能です。</p>
+
+  <hr class="divider">
+
+  <p style="font-size:12px;color:var(--tx2);text-align:center">
+    システムに関するお問い合わせは社内担当者にご連絡ください。<br>
+    最終更新：2026年5月
+  </p>
+</div>
+
+</div><!-- /container -->
+</body>
+</html>
