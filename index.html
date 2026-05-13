@@ -677,23 +677,36 @@ function fbStartListener(){
     if(data.masters){MASTERS=data.masters;if(MASTERS.statuses){var idx=MASTERS.statuses.indexOf('検図中');if(idx>=0)MASTERS.statuses[idx]='検討中';}}
     if(MASTERS.statuses&&MASTERS.statuses.indexOf('完了')<0){var _ni=MASTERS.statuses.indexOf('納品済');if(_ni>=0)MASTERS.statuses.splice(_ni,0,'完了');else MASTERS.statuses.push('完了');}
     if(data.inspections){
+      var needPushBack=false;
+      // Firestoreにある図面のエントリを処理
       Object.keys(data.inspections).forEach(function(id){
         var incoming=data.inspections[id]||[];
         var existing=inspectionReports[id]||[];
-        // Firestoreを正とし、ローカルにキャッシュ済みのfileデータは保持
-        inspectionReports[id]=incoming.map(function(r){
+        var merged=incoming.map(function(r){
           var local=r.fileId?existing.find(function(x){return x.fileId===r.fileId;}):null;
           return local?local:{name:r.name,date:r.date,type:r.type,fileId:r.fileId||'',data:r.data||''};
         });
+        // ローカルにのみある有効エントリ（アップロード直後など未同期）も保持してFirestoreに書き戻す
+        existing.forEach(function(e){
+          if(e.fileId&&!merged.find(function(m){return m.fileId===e.fileId;})){
+            merged.push(e);needPushBack=true;
+          }
+        });
+        inspectionReports[id]=merged;
       });
-      // Firestoreで削除されたdrawingIdのエントリをローカルからも削除
+      // Firestoreにない図面: 有効なfileIdがあれば保持してプッシュ、なければ削除
       Object.keys(inspectionReports).forEach(function(id){
-        if(!data.inspections[id]||data.inspections[id].length===0)delete inspectionReports[id];
+        if(!data.inspections[id]){
+          var valid=(inspectionReports[id]||[]).filter(function(r){return !!r.fileId;});
+          if(valid.length>0){inspectionReports[id]=valid;needPushBack=true;}
+          else delete inspectionReports[id];
+        }
       });
-      // 重複・破損エントリを除去し、変化があればFirestoreにも書き戻す
-      if(deduplicateInspections()){
+      // 重複・破損エントリ除去 + ローカル未同期エントリがあればFirestoreに書き戻す
+      var dedupChanged=deduplicateInspections();
+      if(dedupChanged||needPushBack){
         fbLastLocalChange=Date.now();
-        fbDB.collection('workspaces').doc('default').update({inspections:inspMeta(),lastModified:firebase.firestore.FieldValue.serverTimestamp()}).catch(function(e){console.warn('dedup push failed:',e.message);});
+        fbDB.collection('workspaces').doc('default').update({inspections:inspMeta(),lastModified:firebase.firestore.FieldValue.serverTimestamp()}).catch(function(e){console.warn('sync push failed:',e.message);});
       }
       fbLoadInspectionFiles();
     }
