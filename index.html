@@ -725,7 +725,7 @@ function fbStartListener(){
       localStorage.setItem('dxp_fbCache',JSON.stringify({
         drawings:DRAWINGS,
         masters:MASTERS,
-        inspections:inspectionReports,
+        inspections:getInspMeta(),
         invoices:INVOICES,
         annotations:ANNOTATIONS,
         nextId:nextId
@@ -2784,6 +2784,10 @@ function uploadInspection(drawingId){
   input.accept='application/pdf,image/*';
   input.onchange=function(e){
     var f=e.target.files[0];if(!f)return;
+    if(f.size>30*1024*1024){
+      alert('ファイルが大きすぎます（'+Math.round(f.size/1024/1024)+'MB）。\n30MB以内のファイルを選択してください。');
+      return;
+    }
     var reader=new FileReader();
     reader.onload=function(ev){
       var raw=ev.target.result;
