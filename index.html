@@ -725,7 +725,7 @@ function fbStartListener(){
       localStorage.setItem('dxp_fbCache',JSON.stringify({
         drawings:DRAWINGS,
         masters:MASTERS,
-        inspections:getInspMeta(),
+        inspections:inspMeta(),
         invoices:INVOICES,
         annotations:ANNOTATIONS,
         nextId:nextId
@@ -2770,10 +2770,28 @@ function fbLoadInspectionFiles(){
   if(!fbEnabled)return;
   Object.keys(inspectionReports).forEach(function(drawingId){
     (inspectionReports[drawingId]||[]).forEach(function(r){
-      if(r.fileId&&!r.data){
+      if(!r.fileId)return;
+      if(!r.data){
+        // ローカルにデータなし → Firestoreから取得
         fbDB.collection('workspaces').doc('insp_'+r.fileId).get().then(function(doc){
-          if(doc.exists){r.data=doc.data().data;dbPut('meta','inspections',inspectionReports);}
-        });
+          if(doc.exists){
+            r.data=doc.data().data;
+            dbPut('meta','inspections',inspectionReports);
+            render();
+          }
+        }).catch(function(e){console.warn('insp load failed:',e.message);});
+      } else {
+        // ローカルにデータあり → Firestoreに存在しない場合は再アップロード（ルール期限切れ中の未保存分を救済）
+        fbDB.collection('workspaces').doc('insp_'+r.fileId).get().then(function(doc){
+          if(!doc.exists){
+            var entry=inspectionReports[drawingId]&&inspectionReports[drawingId].find(function(x){return x.fileId===r.fileId;});
+            if(entry&&entry.data){
+              fbDB.collection('workspaces').doc('insp_'+r.fileId).set({
+                drawingId:+drawingId,name:entry.name,date:entry.date,type:entry.type,data:entry.data
+              }).catch(function(e){console.warn('insp backup failed:',e.message);});
+            }
+          }
+        }).catch(function(e){console.warn('insp check failed:',e.message);});
       }
     });
   });
