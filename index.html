@@ -2478,12 +2478,12 @@ function runOCR(img){
     var t=data.text||'';
     console.log('Cloud Vision成功, テキスト長:',t.length);
     if(t.replace(/\s/g,'').length<3){S.ocrSt='done';S.ocrF={rawText:'テキスト未検出 — 手動入力してください'};render();return}
-    var f=parseOCR(t);f.rawText='[Cloud Vision]\n'+t;S.ocrF=f;S.ocrSt='done';render();
+    var f=parseOCR(t);if(f.name)f.name=matchExistingName(f.name);f.rawText='[Cloud Vision]\n'+t;S.ocrF=f;S.ocrSt='done';render();
   }).catch(function(e){
     console.warn('Cloud Vision失敗:',e.message);
     if(el)el.innerHTML='<div class="dots" style="margin:0"><span></span><span></span><span></span></div>ローカルOCR中...';
     if(typeof Tesseract==='undefined'){S.ocrSt='done';S.ocrF={rawText:'OCR失敗: '+e.message};render();return}
-    Tesseract.recognize(img,'jpn+eng',{logger:function(m){if(m.status==='recognizing text'&&m.progress){var el2=document.querySelector('.ocr-bar.run');if(el2)el2.innerHTML='<div class="dots" style="margin:0"><span></span><span></span><span></span></div>ローカルOCR中... '+Math.round(m.progress*100)+'%'}}}).then(function(r){var t=r.data.text||'';if(t.replace(/\s/g,'').length<3){S.ocrSt='done';S.ocrF={rawText:'テキスト未検出 — 手動入力してください'};render();return}var f=parseOCR(t);f.rawText='[Tesseract]\n'+t;S.ocrF=f;S.ocrSt='done';render()}).catch(function(){S.ocrSt='done';S.ocrF={rawText:'OCR失敗 — 手動入力してください'};render()});
+    Tesseract.recognize(img,'jpn+eng',{logger:function(m){if(m.status==='recognizing text'&&m.progress){var el2=document.querySelector('.ocr-bar.run');if(el2)el2.innerHTML='<div class="dots" style="margin:0"><span></span><span></span><span></span></div>ローカルOCR中... '+Math.round(m.progress*100)+'%'}}}).then(function(r){var t=r.data.text||'';if(t.replace(/\s/g,'').length<3){S.ocrSt='done';S.ocrF={rawText:'テキスト未検出 — 手動入力してください'};render();return}var f=parseOCR(t);if(f.name)f.name=matchExistingName(f.name);f.rawText='[Tesseract]\n'+t;S.ocrF=f;S.ocrSt='done';render()}).catch(function(){S.ocrSt='done';S.ocrF={rawText:'OCR失敗 — 手動入力してください'};render()});
   });
 }
 
@@ -2570,6 +2570,11 @@ function parseOCR(t){
   if(tg.length)f.tags=tg.join(', ');
 
   return f;
+}
+function matchExistingName(ocrName){
+  if(!ocrName||!DRAWINGS||!DRAWINGS.length)return ocrName;
+  var found=DRAWINGS.find(function(d){return d.name&&d.name!==ocrName&&d.name.indexOf(ocrName)>=0});
+  return found?found.name:ocrName;
 }
 function saveDwg(){var num=document.getElementById('rN').value.trim(),nm=document.getElementById('rNm').value.trim();if(!num||!nm){alert('図面番号と名称は必須');return}var id=nextId++;var cl=document.getElementById('rCl').value.trim()||'未指定';DRAWINGS.unshift({id:id,number:num,name:nm,mat:document.getElementById('rM').value.trim()||'未指定',size:document.getElementById('rSz').value.trim()||'未指定',client:cl,price:parseInt(document.getElementById('rPr').value)||0,date:new Date().toISOString().slice(0,10),tags:(document.getElementById('rTg').value||'').split(/[,、]/).map(function(t){return t.trim()}).filter(Boolean),status:document.getElementById('rSt').value,priority:document.getElementById('rPri').value,scanned:!!S.regPrev,isPdf:S.regIsPdf,imgVer:Date.now()});if(S.regPrev){scannedImages[id]=S.regPrev;if(S.regBlobUrl)scannedBlobUrls[id]=S.regBlobUrl;if(S.regIsPdf)scannedPdfs[id]=true}S.regOpen=false;S.tab='list';S.fcat='すべて';S.search='';saveAll();render()}
 function genInvoice(){
