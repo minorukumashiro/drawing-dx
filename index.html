@@ -2459,7 +2459,7 @@ function ocrFromPdf(dataUrl){
       var cv=document.createElement('canvas');cv.width=vp.width;cv.height=vp.height;
       var ctx=cv.getContext('2d');
       return page.render({canvasContext:ctx,viewport:vp}).promise.then(function(){
-        var imgData=cv.toDataURL('image/png');
+        var imgData=cv.toDataURL('image/jpeg',0.88);
         runOCR(imgData);
       });
     }).catch(function(err){S.ocrSt='done';S.ocrF={rawText:'PDF解析エラー: '+err.message};render()});
@@ -2467,15 +2467,21 @@ function ocrFromPdf(dataUrl){
 }
 
 function runOCR(img){
+  var el=document.querySelector('.ocr-bar.run');
+  if(el)el.innerHTML='<div class="dots" style="margin:0"><span></span><span></span><span></span></div>Cloud Vision OCR中...';
+  var sizeMB=(img.length*0.75/1024/1024).toFixed(1);
+  console.log('OCR画像サイズ:',sizeMB,'MB');
   var ocrDrawing=firebase.app().functions('asia-northeast1').httpsCallable('ocrDrawing');
   ocrDrawing({image:img}).then(function(result){
     var t=result.data.text||'';
+    console.log('Cloud Vision成功, テキスト長:',t.length);
     if(t.replace(/\s/g,'').length<3){S.ocrSt='done';S.ocrF={rawText:'テキスト未検出 — 手動入力してください'};render();return}
-    var f=parseOCR(t);f.rawText=t;S.ocrF=f;S.ocrSt='done';render();
+    var f=parseOCR(t);f.rawText='[Cloud Vision]\n'+t;S.ocrF=f;S.ocrSt='done';render();
   }).catch(function(e){
-    console.warn('Cloud Vision失敗、Tesseractにフォールバック:',e.message);
-    if(typeof Tesseract==='undefined'){S.ocrSt='done';S.ocrF={rawText:'OCR失敗 — 手動入力してください'};render();return}
-    Tesseract.recognize(img,'jpn+eng',{logger:function(m){if(m.status==='recognizing text'&&m.progress){var el=document.querySelector('.ocr-bar.run');if(el)el.innerHTML='<div class="dots" style="margin:0"><span></span><span></span><span></span></div>AI読取中(ローカル)... '+Math.round(m.progress*100)+'%'}}}).then(function(r){var t=r.data.text||'';if(t.replace(/\s/g,'').length<3){S.ocrSt='done';S.ocrF={rawText:'テキスト未検出 — 手動入力してください'};render();return}var f=parseOCR(t);f.rawText=t;S.ocrF=f;S.ocrSt='done';render()}).catch(function(){S.ocrSt='done';S.ocrF={rawText:'OCR失敗 — 手動入力してください'};render()});
+    console.warn('Cloud Vision失敗('+e.code+'):',e.message);
+    if(el)el.innerHTML='<div class="dots" style="margin:0"><span></span><span></span><span></span></div>ローカルOCR中...';
+    if(typeof Tesseract==='undefined'){S.ocrSt='done';S.ocrF={rawText:'OCR失敗: '+e.message};render();return}
+    Tesseract.recognize(img,'jpn+eng',{logger:function(m){if(m.status==='recognizing text'&&m.progress){var el2=document.querySelector('.ocr-bar.run');if(el2)el2.innerHTML='<div class="dots" style="margin:0"><span></span><span></span><span></span></div>ローカルOCR中... '+Math.round(m.progress*100)+'%'}}}).then(function(r){var t=r.data.text||'';if(t.replace(/\s/g,'').length<3){S.ocrSt='done';S.ocrF={rawText:'テキスト未検出 — 手動入力してください'};render();return}var f=parseOCR(t);f.rawText='[Tesseract]\n'+t;S.ocrF=f;S.ocrSt='done';render()}).catch(function(){S.ocrSt='done';S.ocrF={rawText:'OCR失敗 — 手動入力してください'};render()});
   });
 }
 
