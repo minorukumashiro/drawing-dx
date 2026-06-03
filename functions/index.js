@@ -1,23 +1,34 @@
-const { onCall, HttpsError } = require('firebase-functions/v2/https');
+const { onRequest } = require('firebase-functions/v2/https');
 const vision = require('@google-cloud/vision');
 
 const client = new vision.ImageAnnotatorClient();
 
-exports.ocrDrawing = onCall({
+exports.ocrV2 = onRequest({
   region: 'asia-northeast1',
   timeoutSeconds: 60,
-  memory: '512MiB'
-}, async (request) => {
-  if (!request.data.image) {
-    throw new HttpsError('invalid-argument', 'image is required');
+  memory: '512MiB',
+  cors: ['https://minorukumashiro.github.io', 'http://localhost', 'http://127.0.0.1']
+}, async (req, res) => {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const base64 = request.data.image.replace(/^data:image\/\w+;base64,/, '');
+  const { image } = req.body;
+  if (!image) {
+    return res.status(400).json({ error: 'image is required' });
+  }
 
-  const [result] = await client.textDetection({
-    image: { content: base64 }
-  });
+  try {
+    const base64 = image.replace(/^data:image\/\w+;base64,/, '');
+    const [result] = await client.documentTextDetection({
+      image: { content: base64 },
+      imageContext: { languageHints: ['ja', 'en'] }
+    });
 
-  const text = result.fullTextAnnotation ? result.fullTextAnnotation.text : '';
-  return { text };
+    const text = result.fullTextAnnotation ? result.fullTextAnnotation.text : '';
+    return res.json({ text });
+  } catch (error) {
+    console.error('Vision API error:', error);
+    return res.status(500).json({ error: error.message });
+  }
 });
