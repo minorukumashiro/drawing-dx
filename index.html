@@ -12,6 +12,7 @@
 <!-- Firebase SDK (v10 compat for global window usage) -->
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-functions-compat.js"></script>
 <script>if(typeof pdfjsLib!=='undefined'){pdfjsLib.GlobalWorkerOptions.workerSrc='';}</script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap');
@@ -2465,7 +2466,18 @@ function ocrFromPdf(dataUrl){
   }catch(err){S.ocrSt='done';S.ocrF={rawText:'PDFエラー: '+err.message};render()}
 }
 
-function runOCR(img){if(typeof Tesseract==='undefined'){S.ocrSt='done';S.ocrF={rawText:'OCRライブラリ未読込 — 手動入力してください'};render();return}Tesseract.recognize(img,'jpn+eng',{logger:function(m){if(m.status==='recognizing text'&&m.progress){var el=document.querySelector('.ocr-bar.run');if(el)el.innerHTML='<div class="dots" style="margin:0"><span></span><span></span><span></span></div>AI読取中... '+Math.round(m.progress*100)+'%'}}}).then(function(r){var t=r.data.text||'';if(t.replace(/\s/g,'').length<3){S.ocrSt='done';S.ocrF={rawText:'テキスト未検出 — 手動入力してください'};render();return}var f=parseOCR(t);f.rawText=t;S.ocrF=f;S.ocrSt='done';render()}).catch(function(){S.ocrSt='done';S.ocrF={rawText:'OCR失敗 — 手動入力してください'};render()})}
+function runOCR(img){
+  var ocrDrawing=firebase.app().functions('asia-northeast1').httpsCallable('ocrDrawing');
+  ocrDrawing({image:img}).then(function(result){
+    var t=result.data.text||'';
+    if(t.replace(/\s/g,'').length<3){S.ocrSt='done';S.ocrF={rawText:'テキスト未検出 — 手動入力してください'};render();return}
+    var f=parseOCR(t);f.rawText=t;S.ocrF=f;S.ocrSt='done';render();
+  }).catch(function(e){
+    console.warn('Cloud Vision失敗、Tesseractにフォールバック:',e.message);
+    if(typeof Tesseract==='undefined'){S.ocrSt='done';S.ocrF={rawText:'OCR失敗 — 手動入力してください'};render();return}
+    Tesseract.recognize(img,'jpn+eng',{logger:function(m){if(m.status==='recognizing text'&&m.progress){var el=document.querySelector('.ocr-bar.run');if(el)el.innerHTML='<div class="dots" style="margin:0"><span></span><span></span><span></span></div>AI読取中(ローカル)... '+Math.round(m.progress*100)+'%'}}}).then(function(r){var t=r.data.text||'';if(t.replace(/\s/g,'').length<3){S.ocrSt='done';S.ocrF={rawText:'テキスト未検出 — 手動入力してください'};render();return}var f=parseOCR(t);f.rawText=t;S.ocrF=f;S.ocrSt='done';render()}).catch(function(){S.ocrSt='done';S.ocrF={rawText:'OCR失敗 — 手動入力してください'};render()});
+  });
+}
 
 function parseOCR(t){
   var f={},a=t.replace(/\s+/g,' '),l=t.split(/\n/);
