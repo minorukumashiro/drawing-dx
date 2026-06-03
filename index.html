@@ -2493,7 +2493,7 @@ function parseOCR(t){
   // 図面番号: DWG-xxxx, BP-40C26, MAA059736-L5-A 等
   var nm=a.match(/(?:DWG|BP|DR|NO|MAA|WAA|HAA|BAA|図番|文書番号|DRAWING[\s\-]*NO|DWG[\s\-]*NO)[.\-\s:：]*([A-Z0-9][A-Z0-9\-]{3,25})/i);
   if(nm)f.number=nm[1].replace(/\s/g,'-').toUpperCase();
-  if(!f.number){var nm2=a.match(/\b([A-Z]{2,4}\d{4,8}[-][A-Z0-9]{1,5}[-][A-Z0-9]{1,5})\b/i);if(nm2)f.number=nm2[1].toUpperCase()}
+  if(!f.number){var nm2=a.match(/\b([A-Z]{2,4}[-]?\d{3,8}[-][A-Z0-9]{1,5}(?:[-][A-Z0-9]{1,5})?)\b/i);if(nm2)f.number=nm2[1].toUpperCase()}
   if(!f.number){var nm3=a.match(/\b[A-Z]{1,4}[-\s]?\d{4,8}[A-Z0-9\-]{0,12}\b/i);if(nm3)f.number=nm3[0].replace(/\s/g,'-').toUpperCase()}
 
   // 材質: SUS304TP, SS400, S45C, SCM435, A5052, FC250 等（末尾複数文字対応）
