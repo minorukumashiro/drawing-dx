@@ -7,7 +7,7 @@ exports.ocrV2 = onRequest({
   region: 'asia-northeast1',
   timeoutSeconds: 60,
   memory: '512MiB',
-  cors: ['https://minorukumashiro.github.io', 'http://localhost', 'http://127.0.0.1']
+  cors: true
 }, async (req, res) => {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
