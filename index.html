@@ -367,6 +367,7 @@ function loadData(){
         inspectionReports=reqs.inspections.result||{};
         if(reqs.relatedFiles.result)relatedFiles=reqs.relatedFiles.result;
         if(reqs.relatedDocuments.result)relatedDocuments=reqs.relatedDocuments.result;
+        migrateRelatedFilesToDocs();
         deduplicateInspections();
 if(reqs.annotations.result)ANNOTATIONS=reqs.annotations.result;
         if(reqs.nextId.result)nextId=reqs.nextId.result;
@@ -457,6 +458,21 @@ function loadFromLocalStorage(){
   }catch(e){DRAWINGS=DEFAULT_DRAWINGS.slice();MASTERS=JSON.parse(JSON.stringify(DEF_MASTERS))}
 }
 
+function migrateRelatedFilesToDocs(){
+  var changed=false;
+  Object.keys(relatedFiles).forEach(function(drawingId){
+    (relatedFiles[drawingId]||[]).forEach(function(f){
+      if(!relatedDocuments[drawingId])relatedDocuments[drawingId]=[];
+      var exists=relatedDocuments[drawingId].find(function(x){return x.name===f.name;});
+      if(!exists){
+        var fileId=String(drawingId)+'_mig_'+Date.now()+'_'+Math.random().toString(36).slice(2,6);
+        relatedDocuments[drawingId].push({name:f.name,date:f.date,type:f.type,fileId:fileId,data:f.data||''});
+        changed=true;
+      }
+    });
+  });
+  if(changed){relatedFiles={};dbPut('meta','relatedFiles',relatedFiles);}
+}
 function saveAll(skipImages){
   // Save metadata to IndexedDB
   dbPut('meta','drawings',DRAWINGS);
