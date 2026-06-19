@@ -369,6 +369,7 @@ function loadData(){
         if(reqs.relatedDocuments.result)relatedDocuments=reqs.relatedDocuments.result;
         migrateRelatedFilesToDocs();
         deduplicateInspections();
+        deduplicateRelatedDocs();
 if(reqs.annotations.result)ANNOTATIONS=reqs.annotations.result;
         if(reqs.nextId.result)nextId=reqs.nextId.result;
         if(reqs.masters.result)MASTERS=reqs.masters.result;
@@ -467,6 +468,7 @@ function migrateRelatedFilesToDocs(){
       if(!exists){
         var fileId=String(drawingId)+'_mig_'+Date.now()+'_'+Math.random().toString(36).slice(2,6);
         relatedDocuments[drawingId].push({name:f.name,date:f.date,type:f.type,fileId:fileId,data:f.data||''});
+        locallyAddedRdocIds[fileId]=true;
         changed=true;
       }
     });
@@ -500,6 +502,23 @@ function saveAll(skipImages){
 }
 
 // Remove duplicate/corrupted inspection entries (empty fileId or same fileId twice)
+function deduplicateRelatedDocs(){
+  var changed=false;
+  Object.keys(relatedDocuments).forEach(function(drawingId){
+    var arr=relatedDocuments[drawingId]||[];
+    var seenNames={};var seenIds={};
+    var deduped=arr.filter(function(r){
+      var nk=r.name||'';var ik=r.fileId||'';
+      if((nk&&seenNames[nk])||(ik&&seenIds[ik])){changed=true;return false;}
+      if(nk)seenNames[nk]=true;if(ik)seenIds[ik]=true;
+      return true;
+    });
+    relatedDocuments[drawingId]=deduped;
+    if(deduped.length===0)delete relatedDocuments[drawingId];
+  });
+  if(changed)dbPut('meta','relatedDocuments',relatedDocuments);
+  return changed;
+}
 function deduplicateInspections(){
   var changed=false;
   Object.keys(inspectionReports).forEach(function(id){
@@ -742,7 +761,7 @@ function fbStartListener(){
           return local?local:{name:r.name,date:r.date,type:r.type,fileId:r.fileId||'',data:r.data||''};
         });
         existing.forEach(function(e){
-          if(e.fileId&&!merged.find(function(m){return m.fileId===e.fileId;})){
+          if(e.fileId&&!merged.find(function(m){return m.fileId===e.fileId;})&&locallyAddedRdocIds[e.fileId]){
             merged.push(e);rdNeedPushBack=true;
           }
         });
@@ -750,12 +769,13 @@ function fbStartListener(){
       });
       Object.keys(relatedDocuments).forEach(function(id){
         if(!data.relatedDocuments[id]){
-          var valid=(relatedDocuments[id]||[]).filter(function(r){return !!r.fileId;});
+          var valid=(relatedDocuments[id]||[]).filter(function(r){return !!r.fileId&&locallyAddedRdocIds[r.fileId];});
           if(valid.length>0){relatedDocuments[id]=valid;rdNeedPushBack=true;}
           else delete relatedDocuments[id];
         }
       });
-      if(rdNeedPushBack){
+      var rdDedupChanged=deduplicateRelatedDocs();
+      if(rdNeedPushBack||rdDedupChanged){
         fbLastLocalChange=Date.now();
         fbDB.collection('workspaces').doc('default').update({relatedDocuments:relDocMeta(),lastModified:firebase.firestore.FieldValue.serverTimestamp()}).catch(function(e){console.warn('rdoc sync push failed:',e.message);});
       }
@@ -1051,6 +1071,7 @@ function importAllData(event){
 var DRAWINGS=[];
 var SIM={circle:{shaft:30,bracket:15,plate:20,spacer:58},shaft:{circle:30,bracket:20,plate:12,spacer:62},bracket:{circle:15,shaft:20,plate:45,spacer:12},plate:{circle:20,shaft:12,bracket:45,spacer:15},spacer:{circle:58,shaft:62,bracket:12,plate:15}};
 var INVOICES=[],scannedImages={},scannedPdfs={},scannedBlobUrls={},pdfThumbnails={},inspectionReports={},relatedFiles={},relatedDocuments={},nextId=11;
+var locallyAddedRdocIds={};
 var _localImgVer={};try{var _livStr=localStorage.getItem('dxp_localImgVer');if(_livStr)_localImgVer=JSON.parse(_livStr);}catch(e){}
 var ANNOTATIONS={}; // {drawingId: {stamps:[], qrs:[], texts:[], lines:[], updated:timestamp}}
 
@@ -3014,6 +3035,7 @@ function uploadRelatedDoc(drawingId){
       var raw=ev.target.result;
       function store(data){
         var fileId=String(drawingId)+'_'+Date.now();
+        locallyAddedRdocIds[fileId]=true;
         var doc={name:f.name,date:new Date().toISOString().slice(0,10),type:f.type,fileId:fileId,data:data};
         if(!relatedDocuments[drawingId])relatedDocuments[drawingId]=[];
         relatedDocuments[drawingId]=relatedDocuments[drawingId].filter(function(x){return x.name!==f.name;});
