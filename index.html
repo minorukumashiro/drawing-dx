@@ -9,6 +9,7 @@
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <!-- jsPDF for exporting drawings as PDF -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <!-- Firebase SDK (v10 compat for global window usage) -->
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
@@ -360,7 +361,7 @@ function loadData(){
       var tx=db.transaction('meta','readonly');
       var store=tx.objectStore('meta');
       var reqs={};
-      ['drawings','invoices','scannedPdfs','pdfThumbs','nextId','masters','serverUrl','inspections','relatedFiles','relatedDocuments','annotations'].forEach(function(k){
+      ['drawings','invoices','scannedPdfs','pdfThumbs','nextId','masters','serverUrl','inspections','relatedFiles','relatedDocuments','annotations','deliveries'].forEach(function(k){
         reqs[k]=store.get(k);
       });
       tx.oncomplete=function(){
@@ -373,6 +374,7 @@ function loadData(){
         }
         // window._cacheLoaded=true の場合は dxp_fbCache が既に DRAWINGS を設定済みなのでそのまま使用
         INVOICES=reqs.invoices.result||[];
+        if(reqs.deliveries.result)DELIVERIES=reqs.deliveries.result;
         scannedPdfs=reqs.scannedPdfs.result||{};
         pdfThumbnails=reqs.pdfThumbs.result||{};
         inspectionReports=reqs.inspections.result||{};
@@ -460,6 +462,8 @@ function loadFromLocalStorage(){
     if(d){DRAWINGS=JSON.parse(d)}else{DRAWINGS=DEFAULT_DRAWINGS.slice()}
     var inv=localStorage.getItem('dxp_invoices');
     if(inv)INVOICES=JSON.parse(inv);
+    var dlv=localStorage.getItem('dxp_deliveries');
+    if(dlv)DELIVERIES=JSON.parse(dlv);
     scannedImages={};
     var siKeys=localStorage.getItem('dxp_imgKeys');
     if(siKeys){JSON.parse(siKeys).forEach(function(id){var img=localStorage.getItem('dxp_img_'+id);if(img)scannedImages[id]=img})}
@@ -490,6 +494,8 @@ function saveAll(skipImages){
   // Save metadata to IndexedDB
   dbPut('meta','drawings',DRAWINGS);
   dbPut('meta','invoices',INVOICES);
+  dbPut('meta','deliveries',DELIVERIES);
+  try{localStorage.setItem('dxp_deliveries',JSON.stringify(DELIVERIES));}catch(e){}
   dbPut('meta','scannedPdfs',scannedPdfs);
   dbPut('meta','pdfThumbs',pdfThumbnails);
   dbPut('meta','nextId',nextId);
@@ -576,7 +582,7 @@ function fbPushAll(skipImages){
     fbMetaSyncing=true;
     var payload={
       drawings:DRAWINGS,masters:MASTERS,inspections:inspMeta(),relatedDocuments:relDocMeta(),
-      invoices:INVOICES,annotations:ANNOTATIONS,nextId:nextId,
+      invoices:INVOICES,annotations:ANNOTATIONS,deliveries:DELIVERIES,nextId:nextId,
       lastModified:firebase.firestore.FieldValue.serverTimestamp(),
       lastClient:fbClientId()
     };
@@ -793,10 +799,12 @@ function fbStartListener(){
       fbLoadRelatedDocFiles();
     }
     if(data.invoices)INVOICES=data.invoices;
+    if(data.deliveries)DELIVERIES=data.deliveries;
     if(data.annotations)ANNOTATIONS=data.annotations;
     if(data.nextId)nextId=Math.max(nextId,data.nextId);
     // Save to IndexedDB
     dbPut('meta','drawings',DRAWINGS);
+    dbPut('meta','deliveries',DELIVERIES);
     dbPut('meta','masters',MASTERS);
     dbPut('meta','inspections',inspectionReports);
     dbPut('meta','relatedDocuments',relatedDocuments);
@@ -812,6 +820,7 @@ function fbStartListener(){
         relatedDocuments:relDocMeta(),
         invoices:INVOICES,
         annotations:ANNOTATIONS,
+        deliveries:DELIVERIES,
         nextId:nextId
       }));
     }catch(e){/* localStorage may be full */}
@@ -966,7 +975,7 @@ async function forcePushToFirebase(){
     await fbPushImages();
     var payload={
       drawings:DRAWINGS,masters:MASTERS,inspections:inspMeta(),relatedDocuments:relDocMeta(),
-      invoices:INVOICES,annotations:ANNOTATIONS,nextId:nextId,
+      invoices:INVOICES,annotations:ANNOTATIONS,deliveries:DELIVERIES,nextId:nextId,
       lastModified:firebase.firestore.FieldValue.serverTimestamp(),
       lastClient:fbClientId()
     };
@@ -1082,6 +1091,7 @@ function importAllData(event){
 var DRAWINGS=[];
 var SIM={circle:{shaft:30,bracket:15,plate:20,spacer:58},shaft:{circle:30,bracket:20,plate:12,spacer:62},bracket:{circle:15,shaft:20,plate:45,spacer:12},plate:{circle:20,shaft:12,bracket:45,spacer:15},spacer:{circle:58,shaft:62,bracket:12,plate:15}};
 var INVOICES=[],scannedImages={},scannedPdfs={},scannedBlobUrls={},pdfThumbnails={},inspectionReports={},relatedFiles={},relatedDocuments={},nextId=11;
+var DELIVERIES=[]; // 納品カレンダー転記データ {id,drawingId,date,client,number,name,size,qty,price,transcribedAt}
 var locallyAddedRdocIds={};
 var _localImgVer={};try{var _livStr=localStorage.getItem('dxp_localImgVer');if(_livStr)_localImgVer=JSON.parse(_livStr);}catch(e){}
 var ANNOTATIONS={}; // {drawingId: {stamps:[], qrs:[], texts:[], lines:[], updated:timestamp}}
@@ -1111,6 +1121,7 @@ try{
       if(data.inspections)inspectionReports=data.inspections;
       if(data.relatedDocuments)relatedDocuments=data.relatedDocuments;
       if(data.invoices)INVOICES=data.invoices;
+      if(data.deliveries)DELIVERIES=data.deliveries;
       if(data.annotations)ANNOTATIONS=data.annotations;
       if(data.nextId)nextId=data.nextId;
       window._cacheLoaded=true; // IndexedDB が空でもこのデータを保持する
@@ -1173,7 +1184,7 @@ function render(){
   var _mobile=isMobileDevice();
   // If mobile and current tab is 'master', switch to 'board'
   if(_mobile&&S.tab==='master')S.tab='board';
-  var _tabs=_mobile?[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'}]:[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'},{k:'master',l:'マスター管理'}];
+  var _tabs=_mobile?[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'},{k:'delivery',l:'納品カレンダー'}]:[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'},{k:'delivery',l:'納品カレンダー'},{k:'master',l:'マスター管理'}];
   _tabs.forEach(function(t){h+='<button class="nav-tab'+(S.tab===t.k?' active':'')+'" onclick="setTab(\''+t.k+'\')">'+t.l+'</button>'});
   var _ssc=(function(){var cm={connecting:'#0066CC',pushing:'#0066CC',synced:'#1B8C65',error:'#D70015',offline:'#86868b'};var tm={connecting:'⟳ 接続中...',pushing:'⟳ 同期中...',synced:'✓ 同期済',error:'⚠ 同期エラー',offline:'○ オフライン'};return{c:cm[fbSyncState]||'#86868b',t:tm[fbSyncState]||'○ オフライン'};})();
   h+='<div id="fbSyncStatus" style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;background:var(--bg2);color:'+_ssc.c+';white-space:nowrap;cursor:pointer" title="タップして再取得" onclick="mobileForcePull()">'+_ssc.t+'</div>';
@@ -1193,6 +1204,54 @@ function render(){
 
   // BOARD
   if(S.tab==='board'){h+='<div class="section-title">案件ホワイトボード</div><div style="margin-bottom:14px;display:flex;gap:8px"><input id="wbSearchInput" type="search" placeholder="図面名・図面番号・取引先で絞り込み..." value="'+esc(S.wbSearchInput||'')+'" oninput="S.wbSearchInput=this.value" onkeydown="if(event.key===\'Enter\'){S.wbSearch=S.wbSearchInput;render()}" style="flex:1;padding:9px 14px;border-radius:10px;border:1px solid '+(S.wbSearch?'var(--ac)':'var(--bd)')+';background:var(--bg);color:var(--tx);font-size:13px;outline:none;box-sizing:border-box"><button onclick="S.wbSearch=S.wbSearchInput||S.wbSearch;render()" style="padding:9px 18px;border-radius:10px;border:none;background:var(--ac);color:#fff;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">検索</button>'+(S.wbSearch?'<button onclick="S.wbSearch=\'\';S.wbSearchInput=\'\';render()" style="padding:9px 14px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);font-size:13px;cursor:pointer">✕ クリア</button>':'')+'</div><div class="board">';sts.forEach(function(st){var _wbq=(S.wbSearch||'').toLowerCase();var items=DRAWINGS.filter(function(d){if(d.status!==st)return false;if(!_wbq)return true;return d.name.toLowerCase().indexOf(_wbq)>=0||d.number.toLowerCase().indexOf(_wbq)>=0||d.client.toLowerCase().indexOf(_wbq)>=0||(d.tags&&d.tags.join(' ').toLowerCase().indexOf(_wbq)>=0);});h+='<div class="board-col"><div class="board-col-head"><span class="dot" style="background:'+stC[st]+'"></span>'+st+'<span class="cnt">'+items.length+'</span></div>';items.forEach(function(d){var hasAnno=ANNOTATIONS[d.id]&&((ANNOTATIONS[d.id].lines&&ANNOTATIONS[d.id].lines.length)||(ANNOTATIONS[d.id].stamps&&ANNOTATIONS[d.id].stamps.length)||(ANNOTATIONS[d.id].texts&&ANNOTATIONS[d.id].texts.length)||(ANNOTATIONS[d.id].qrs&&ANNOTATIONS[d.id].qrs.length));h+='<div class="board-card" onclick="openDetail('+d.id+')"><div class="bc-title">'+d.name+(d.scanned?'<span class="badge badge-scan">スキャン</span>':'')+(hasAnno?'<span class="badge" style="background:#FDF3E0;color:#B06E15;margin-left:4px">✏ 書込</span>':'')+'</div><div class="bc-meta">'+d.number+' · '+d.client+'</div><div class="bc-tags"><span class="bc-tag" style="background:'+stB[st]+';color:'+stC[st]+'">'+st+'</span><span class="bc-tag" style="background:'+(d.priority==='高'?'var(--rd2)':d.priority==='中'?'var(--am2)':'var(--bg3)')+';color:'+(d.priority==='高'?'var(--rd)':d.priority==='中'?'var(--am)':'var(--tx3)')+'">'+d.priority+'</span></div><div style="display:flex;gap:4px;margin-top:6px"><button style="font-size:9px;padding:2px 6px;border-radius:4px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer" onclick="event.stopPropagation();selAnno('+d.id+');S.tab=\'annotate\';render()">書込</button><button style="font-size:9px;padding:2px 6px;border-radius:4px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer" onclick="event.stopPropagation();printDrawingImage('+d.id+')">印刷</button></div></div>'});h+='</div>'});h+='</div>'}
+
+  // 納品カレンダー
+  if(S.tab==='delivery'){
+    var _now=new Date();
+    if(S.calYear==null)S.calYear=_now.getFullYear();
+    if(S.calMonth==null)S.calMonth=_now.getMonth();
+    var cy=S.calYear,cm=S.calMonth;
+    var startDow=new Date(cy,cm,1).getDay();
+    var daysInMonth=new Date(cy,cm+1,0).getDate();
+    var byDay={};
+    DELIVERIES.forEach(function(e){if(!e.date)return;var dt=new Date(e.date);if(dt.getFullYear()!==cy||dt.getMonth()!==cm)return;var day=parseInt(String(e.date).slice(8,10),10);(byDay[day]=byDay[day]||[]).push(e);});
+    var monthCount=Object.keys(byDay).reduce(function(s,k){return s+byDay[k].length},0);
+    h+='<div class="section-title">納品カレンダー</div>';
+    h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">';
+    h+='<button onclick="calNav(-1)" style="padding:8px 14px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--tx);font-size:13px;cursor:pointer">‹ 前月</button>';
+    h+='<div style="font-size:18px;font-weight:700;min-width:150px;text-align:center">'+cy+'年 '+(cm+1)+'月</div>';
+    h+='<button onclick="calNav(1)" style="padding:8px 14px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--tx);font-size:13px;cursor:pointer">翌月 ›</button>';
+    h+='<button onclick="calToday()" style="padding:8px 14px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);font-size:12px;cursor:pointer">今月</button>';
+    h+='<span style="font-size:12px;color:var(--tx3);margin-left:4px">納品 '+monthCount+'件</span>';
+    h+='<div style="flex:1"></div>';
+    h+='<button onclick="exportDeliveryExcel()" style="padding:9px 18px;border-radius:8px;border:none;background:#1B8C65;color:#fff;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">📥 Excelダウンロード</button>';
+    h+='</div>';
+    // 曜日ヘッダ
+    var dows=['日','月','火','水','木','金','土'];
+    h+='<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px">';
+    dows.forEach(function(w,i){var col=i===0?'#D70015':(i===6?'#185FA5':'var(--tx2)');h+='<div style="text-align:center;font-size:12px;font-weight:700;color:'+col+';padding:4px 0">'+w+'</div>';});
+    h+='</div>';
+    // 日付グリッド
+    h+='<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px">';
+    var totalCells=Math.ceil((startDow+daysInMonth)/7)*7;
+    for(var ci=0;ci<totalCells;ci++){
+      var dayNum=ci-startDow+1;
+      if(dayNum<1||dayNum>daysInMonth){h+='<div style="min-height:110px;border-radius:8px;background:var(--bg2);opacity:.4"></div>';continue;}
+      var dow=ci%7;var dnColor=dow===0?'#D70015':(dow===6?'#185FA5':'var(--tx)');
+      var isToday=(cy===_now.getFullYear()&&cm===_now.getMonth()&&dayNum===_now.getDate());
+      var entries=byDay[dayNum]||[];
+      h+='<div style="min-height:110px;border:1px solid '+(isToday?'var(--ac)':'var(--bd)')+';border-radius:8px;background:var(--bg);padding:5px;overflow:hidden">';
+      h+='<div style="font-size:12px;font-weight:700;color:'+dnColor+';margin-bottom:4px">'+dayNum+(isToday?' <span style="font-size:9px;color:var(--ac)">今日</span>':'')+'</div>';
+      entries.forEach(function(e){
+        var td=deliveryThumbData(e.drawingId);
+        var img=td?'<img src="'+td+'" style="width:34px;height:34px;object-fit:contain;background:#fff;border:1px solid var(--bd);border-radius:4px;flex-shrink:0">':'<div style="width:34px;height:34px;background:var(--bg2);border-radius:4px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:8px;color:var(--tx3)">図</div>';
+        h+='<div onclick="openDeliveryEntry('+e.id+')" title="クリックで詳細" style="display:flex;gap:5px;align-items:center;background:#E8F5EE;border:1px solid #1B8C6533;border-radius:6px;padding:3px;margin-bottom:4px;cursor:pointer">'+img+'<div style="min-width:0;flex:1"><div style="font-size:10px;font-weight:700;color:#1B8C65;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(e.number||'')+'</div><div style="font-size:9px;color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(e.client||'')+'</div><div style="font-size:9px;color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(e.qty?esc(String(e.qty))+'個':'')+(e.price?' ¥'+Number(e.price).toLocaleString():'')+'</div></div></div>';
+      });
+      h+='</div>';
+    }
+    h+='</div>';
+    if(monthCount===0)h+='<div style="text-align:center;color:var(--tx3);font-size:13px;padding:20px">この月の納品はまだありません。図面を【納品済】に変更すると転記確認が表示されます。</div>';
+  }
 
   // SEARCH
   // INTEGRATED LIST + AI SEARCH
@@ -1402,6 +1461,32 @@ function render(){
     +'<div class="f-field" style="margin-bottom:12px"><label>タグ（カンマ区切り）</label><input id="eTg" value="'+esc((ed.tags||[]).join(', '))+'"></div>'
     +(function(){var relChips=(S.editRelated||[]).map(function(rid){var rd=DRAWINGS.find(function(x){return x.id===rid});return rd?'<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:#E8F0FF;border:1px solid var(--ac);border-radius:12px;font-size:11px;color:var(--ac)">'+esc(rd.number)+' '+esc(rd.name)+'<button onclick="removeRelated('+rid+')" style="background:none;border:none;cursor:pointer;color:var(--rd);font-size:14px;padding:0 2px;line-height:1">&times;</button></span>':'';}).join('');var q=(S.relSearchQ||'').toLowerCase();var relDrop='';if(q){var res=DRAWINGS.filter(function(x){return x.id!==ed.id&&(S.editRelated||[]).indexOf(x.id)<0&&(x.number.toLowerCase().indexOf(q)>=0||x.name.toLowerCase().indexOf(q)>=0);}).slice(0,6);relDrop='<div style="border:1px solid var(--bd);border-radius:6px;overflow:hidden;margin-bottom:6px;background:var(--bg)">'+(res.length?res.map(function(x){return'<div onclick="addRelated('+x.id+')" style="padding:7px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--bd)" onmouseover="this.style.background=\'var(--bg2)\'" onmouseout="this.style.background=\'\'">'+esc(x.number)+' — '+esc(x.name)+'<span style="font-size:10px;color:var(--tx3);margin-left:6px">'+esc(x.client)+'</span></div>';}).join(''):'<div style="font-size:11px;color:var(--tx3);padding:8px 10px">一致する図面がありません</div>')+'</div>';}return'<div class="f-field" style="margin-bottom:12px"><label>関連図面</label><input id="relSrch" placeholder="図面番号または名称で検索して追加..." value="'+esc(S.relSearchQ||'')+'" oninput="S.relSearchQ=this.value;render()" style="margin-bottom:6px">'+relDrop+'<div style="display:flex;flex-wrap:wrap;gap:6px;min-height:8px">'+relChips+'</div></div>';})()
     +'</div><div class="modal-foot"><button class="btn-cancel" onclick="closeEdit()">キャンセル</button><button class="btn-save" onclick="saveEdit()">保存</button></div></div></div>'}
+
+  // 納品カレンダー転記確認モーダル
+  if(S.transcribeOpen){
+    var td0=DRAWINGS.find(function(x){return x.id===S.transcribeDwgId;});
+    if(td0){
+      var existing=DELIVERIES.find(function(e){return e.drawingId===td0.id;});
+      var pv={
+        date:(existing&&existing.date)||td0.lastAccess||new Date().toISOString().slice(0,10),
+        client:(existing&&existing.client)||td0.client||'',
+        number:(existing&&existing.number)||td0.number||'',
+        name:(existing&&existing.name)||td0.name||'',
+        size:(existing&&existing.size)||td0.size||'',
+        qty:(existing&&existing.qty!=null?existing.qty:(td0.qty!=null?td0.qty:'')),
+        price:(existing&&existing.price!=null?existing.price:(td0.price!=null?td0.price:''))
+      };
+      var tImg=deliveryThumbData(td0.id);
+      h+='<div class="modal-bg" onclick="closeTranscribe()"><div class="modal" onclick="event.stopPropagation()"><div class="modal-head"><h2>📥 納品カレンダーへ転記確認</h2><button class="close-btn" onclick="closeTranscribe()">&times;</button></div><div style="padding:18px 22px">';
+      h+='<div style="font-size:12px;color:var(--tx3);margin-bottom:12px">この図面を【納品済】にしました。以下の内容を納品カレンダーに転記します。内容を確認・修正のうえ転記してください。'+(existing?'<br><span style="color:#B06E15">※ この図面は既に転記済みです。転記すると上書き更新されます。</span>':'')+'</div>';
+      h+='<div style="text-align:center;margin-bottom:14px;background:var(--bg2);border-radius:var(--r);padding:12px;min-height:80px">'+(tImg?'<img src="'+tImg+'" style="max-width:180px;max-height:160px;object-fit:contain">':'<div style="font-size:11px;color:var(--tx3);padding:30px">サムネイル画像なし</div>')+'</div>';
+      h+='<div class="f-row"><div class="f-field"><label>納品日付</label><input id="tDate" type="date" value="'+esc(pv.date)+'"></div><div class="f-field"><label>取引先</label><input id="tClient" value="'+esc(pv.client)+'"></div></div>';
+      h+='<div class="f-row"><div class="f-field"><label>図面番号</label><input id="tNumber" value="'+esc(pv.number)+'"></div><div class="f-field"><label>図面名称</label><input id="tName" value="'+esc(pv.name)+'"></div></div>';
+      h+='<div class="f-row"><div class="f-field"><label>サイズ</label><input id="tSize" value="'+esc(pv.size)+'"></div><div class="f-field"><label>数量</label><input id="tQty" type="number" value="'+esc(String(pv.qty))+'" onwheel="this.blur()"></div></div>';
+      h+='<div class="f-row"><div class="f-field"><label>単価</label><input id="tPrice" type="number" value="'+esc(String(pv.price))+'" onwheel="this.blur()"></div><div class="f-field"></div></div>';
+      h+='</div><div class="modal-foot"><button class="btn-cancel" onclick="closeTranscribe()">転記しない</button><button class="btn-save" onclick="confirmTranscribe()">カレンダーに転記</button></div></div></div>';
+    }
+  }
 
   // VERIFY MODAL
   if(S.verifyOpen){
@@ -1879,7 +1964,138 @@ function clearAnno(){
 function setTab(t){S.tab=t;render()}
 function openDetail(id){var d=DRAWINGS.find(function(x){return x.id===id});if(d){S.detail=Object.assign({},d,{_sim:0});render()}}
 function closeDetail(){S.detail=null;render()}
-function changeStatus(id,newStatus){var d=DRAWINGS.find(function(x){return x.id===id});if(!d)return;d.status=newStatus;if(newStatus==='納品済')d.lastAccess=new Date().toISOString().slice(0,10);if(S.detail&&S.detail.id===id){S.detail.status=newStatus;if(newStatus==='納品済')S.detail.lastAccess=d.lastAccess;}saveAll(true);render();}
+function changeStatus(id,newStatus){var d=DRAWINGS.find(function(x){return x.id===id});if(!d)return;var prev=d.status;d.status=newStatus;if(newStatus==='納品済')d.lastAccess=new Date().toISOString().slice(0,10);if(S.detail&&S.detail.id===id){S.detail.status=newStatus;if(newStatus==='納品済')S.detail.lastAccess=d.lastAccess;}saveAll(true);if(newStatus==='納品済'&&prev!=='納品済'){openTranscribe(id);}else{render();}}
+
+// ===== 納品カレンダー =====
+// 図面のサムネイル(dataURL)を取得。なければ空文字。
+function deliveryThumbData(drawingId){
+  if(pdfThumbnails&&pdfThumbnails[drawingId]&&typeof pdfThumbnails[drawingId]==='string')return pdfThumbnails[drawingId];
+  if(scannedImages&&scannedImages[drawingId]&&typeof scannedImages[drawingId]==='string'&&scannedImages[drawingId].indexOf('data:image')===0)return scannedImages[drawingId];
+  return '';
+}
+// 【納品済】へ移動時の転記確認モーダルを開く
+function openTranscribe(id){S.transcribeOpen=true;S.transcribeDwgId=id;render();}
+function closeTranscribe(){S.transcribeOpen=false;S.transcribeDwgId=null;render();}
+function confirmTranscribe(){
+  var id=S.transcribeDwgId;var d=DRAWINGS.find(function(x){return x.id===id});if(!d){closeTranscribe();return;}
+  var g=function(eid){var el=document.getElementById(eid);return el?el.value:'';};
+  var qtyV=g('tQty');var priceV=g('tPrice');
+  var entry={
+    drawingId:id,
+    date:g('tDate')||new Date().toISOString().slice(0,10),
+    client:g('tClient').trim(),
+    number:g('tNumber').trim(),
+    name:g('tName').trim(),
+    size:g('tSize').trim(),
+    qty:qtyV===''?'':(parseInt(qtyV)||0),
+    price:priceV===''?'':(parseFloat(priceV)||0),
+    transcribedAt:new Date().toISOString()
+  };
+  var ex=DELIVERIES.find(function(e){return e.drawingId===id;});
+  if(ex){Object.assign(ex,entry);}
+  else{entry.id=Date.now()+Math.floor(Math.random()*1000);DELIVERIES.push(entry);}
+  saveAll(true);
+  S.transcribeOpen=false;S.transcribeDwgId=null;
+  // 転記先の月をカレンダーに表示
+  var dt=new Date(entry.date);if(!isNaN(dt)){S.calYear=dt.getFullYear();S.calMonth=dt.getMonth();}
+  S.tab='delivery';
+  render();
+}
+// カレンダー操作
+function calNav(delta){if(S.calYear==null){var n=new Date();S.calYear=n.getFullYear();S.calMonth=n.getMonth();}S.calMonth+=delta;while(S.calMonth<0){S.calMonth+=12;S.calYear--;}while(S.calMonth>11){S.calMonth-=12;S.calYear++;}render();}
+function calToday(){var n=new Date();S.calYear=n.getFullYear();S.calMonth=n.getMonth();render();}
+// カレンダー上の納品エントリをクリック → 図面詳細（削除済みなら案内）
+function openDeliveryEntry(entryId){var e=DELIVERIES.find(function(x){return x.id===entryId;});if(!e)return;var d=DRAWINGS.find(function(x){return x.id===e.drawingId;});if(d){openDetail(d.id);}else{if(confirm('この図面は削除されています。納品カレンダーから転記データを削除しますか？')){DELIVERIES=DELIVERIES.filter(function(x){return x.id!==entryId;});saveAll(true);render();}}}
+// 納品カレンダーをExcel(月めくり+サムネイル埋め込み)で書き出し
+function exportDeliveryExcel(){
+  if(typeof ExcelJS==='undefined'){alert('Excelライブラリの読み込みに失敗しました。通信環境を確認して再読み込みしてください。');return;}
+  var cy=S.calYear,cm=S.calMonth;
+  if(cy==null){var n=new Date();cy=n.getFullYear();cm=n.getMonth();}
+  var monthEntries=DELIVERIES.filter(function(e){if(!e.date)return false;var dt=new Date(e.date);return dt.getFullYear()===cy&&dt.getMonth()===cm;}).sort(function(a,b){return String(a.date).localeCompare(String(b.date));});
+  if(!monthEntries.length){alert(cy+'年'+(cm+1)+'月の納品データがありません。');return;}
+  var wb=new ExcelJS.Workbook();
+  // --- 画像をworkbookに登録するヘルパ ---
+  function addImg(dataUrl){
+    if(!dataUrl)return -1;
+    var m=/^data:image\/(png|jpe?g|gif);base64,(.+)$/i.exec(dataUrl);
+    if(!m)return -1;
+    var ext=m[1].toLowerCase();if(ext==='jpg')ext='jpeg';
+    try{return wb.addImage({base64:m[2],extension:(ext==='jpeg'?'jpeg':'png')});}catch(e){return -1;}
+  }
+  // ===== シート1: 月めくりカレンダー =====
+  var ws=wb.addWorksheet(cy+'年'+(cm+1)+'月');
+  for(var c=1;c<=7;c++){ws.getColumn(c).width=20;}
+  // タイトル
+  ws.mergeCells(1,1,1,7);
+  var tc=ws.getCell(1,1);tc.value=cy+'年 '+(cm+1)+'月  納品カレンダー';tc.font={size:16,bold:true};tc.alignment={horizontal:'center',vertical:'middle'};ws.getRow(1).height=28;
+  // 曜日ヘッダ
+  var dows=['日','月','火','水','木','金','土'];
+  var hr=ws.getRow(2);hr.height=20;
+  for(var i=0;i<7;i++){var hc=ws.getCell(2,i+1);hc.value=dows[i];hc.font={bold:true,color:{argb:i===0?'FFD70015':(i===6?'FF185FA5':'FF333333')}};hc.alignment={horizontal:'center',vertical:'middle'};hc.border={top:{style:'thin'},left:{style:'thin'},right:{style:'thin'},bottom:{style:'thin'}};}
+  // グリッド: 各週=2行(日付番号行 + 内容行)
+  var byDay={};
+  monthEntries.forEach(function(e){var day=parseInt(String(e.date).slice(8,10),10);(byDay[day]=byDay[day]||[]).push(e);});
+  var startDow=new Date(cy,cm,1).getDay();
+  var daysInMonth=new Date(cy,cm+1,0).getDate();
+  var weeks=Math.ceil((startDow+daysInMonth)/7);
+  var rowCursor=3;
+  for(var w=0;w<weeks;w++){
+    var numRow=rowCursor;var bodyRow=rowCursor+1;
+    ws.getRow(numRow).height=16;
+    ws.getRow(bodyRow).height=86;
+    for(var dcol=0;dcol<7;dcol++){
+      var cellDay=w*7+dcol-startDow+1;
+      var numCell=ws.getCell(numRow,dcol+1);
+      var bodyCell=ws.getCell(bodyRow,dcol+1);
+      var bdr={top:{style:'thin',color:{argb:'FFCCCCCC'}},left:{style:'thin',color:{argb:'FFCCCCCC'}},right:{style:'thin',color:{argb:'FFCCCCCC'}},bottom:{style:'thin',color:{argb:'FFCCCCCC'}}};
+      numCell.border=bdr;bodyCell.border=bdr;
+      bodyCell.alignment={vertical:'top',wrapText:true};
+      if(cellDay>=1&&cellDay<=daysInMonth){
+        numCell.value=cellDay;
+        numCell.font={bold:true,color:{argb:dcol===0?'FFD70015':(dcol===6?'FF185FA5':'FF333333')}};
+        numCell.alignment={horizontal:'left',vertical:'middle'};
+        var ents=byDay[cellDay]||[];
+        if(ents.length){
+          // テキスト(図番/取引先/数量×単価)を1セルにまとめる。画像は先頭1件を貼付。
+          var lines=ents.map(function(e){return '・'+(e.number||'')+' '+(e.client||'')+(e.qty?' '+e.qty+'個':'')+(e.price?' ¥'+Number(e.price).toLocaleString():'');});
+          bodyCell.value=lines.join('\n');
+          bodyCell.font={size:9};
+          numCell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE8F5EE'}};
+          var imgId=addImg(deliveryThumbData(ents[0].drawingId));
+          if(imgId>=0){
+            ws.addImage(imgId,{tl:{col:dcol+0.05,row:bodyRow-1+0.05},ext:{width:44,height:44}});
+            // 画像と重ならないようテキストを下げる
+            bodyCell.value='\n\n\n'+lines.join('\n');
+          }
+        }
+      }else{
+        bodyCell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFF2F2F2'}};
+        numCell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFF2F2F2'}};
+      }
+    }
+    rowCursor+=2;
+  }
+  // ===== シート2: 納品明細(全項目+サムネイル) =====
+  var ds=wb.addWorksheet('納品明細');
+  var cols=[{h:'サムネイル',w:14},{h:'納品日付',w:13},{h:'取引先',w:20},{h:'図面番号',w:16},{h:'図面名称',w:26},{h:'サイズ',w:18},{h:'数量',w:9},{h:'単価',w:12}];
+  cols.forEach(function(c,i){ds.getColumn(i+1).width=c.w;});
+  var dhr=ds.getRow(1);dhr.height=22;
+  cols.forEach(function(c,i){var cc=ds.getCell(1,i+1);cc.value=c.h;cc.font={bold:true,color:{argb:'FFFFFFFF'}};cc.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF1B8C65'}};cc.alignment={horizontal:'center',vertical:'middle'};cc.border={top:{style:'thin'},left:{style:'thin'},right:{style:'thin'},bottom:{style:'thin'}};});
+  monthEntries.forEach(function(e,idx){
+    var r=idx+2;var row=ds.getRow(r);row.height=54;
+    var vals=['',e.date||'',e.client||'',e.number||'',e.name||'',e.size||'',e.qty===''||e.qty==null?'':e.qty,e.price===''||e.price==null?'':e.price];
+    vals.forEach(function(v,ci){var cc=ds.getCell(r,ci+1);cc.value=v;cc.alignment={vertical:'middle',wrapText:true,horizontal:(ci>=6?'right':'left')};cc.border={top:{style:'thin',color:{argb:'FFDDDDDD'}},left:{style:'thin',color:{argb:'FFDDDDDD'}},right:{style:'thin',color:{argb:'FFDDDDDD'}},bottom:{style:'thin',color:{argb:'FFDDDDDD'}}};if(ci===7&&v!=='')cc.numFmt='¥#,##0';});
+    var imgId2=addImg(deliveryThumbData(e.drawingId));
+    if(imgId2>=0){ds.addImage(imgId2,{tl:{col:0.1,row:r-1+0.1},ext:{width:64,height:48}});}
+  });
+  // ダウンロード
+  wb.xlsx.writeBuffer().then(function(buf){
+    var blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');a.href=url;a.download='納品カレンダー_'+cy+'年'+(cm+1)+'月.xlsx';document.body.appendChild(a);a.click();document.body.removeChild(a);
+    setTimeout(function(){URL.revokeObjectURL(url);},1000);
+  }).catch(function(e){alert('Excel出力に失敗しました: '+e.message);});
+}
 function calcSimilarity(src,tgt){
   var score=0,max=0,reasons=[];
 
@@ -3214,6 +3430,7 @@ function saveEdit(){
   orig.size=document.getElementById('eSz').value.trim()||orig.size;
   orig.client=document.getElementById('eCl').value.trim()||orig.client;
   orig.price=parseInt(document.getElementById('ePr').value)||orig.price;
+  var _prevStatus=orig.status;
   orig.status=document.getElementById('eSt').value;
   if(orig.status==='納品済')orig.lastAccess=new Date().toISOString().slice(0,10);
   orig.priority=document.getElementById('ePri').value;
@@ -3225,7 +3442,9 @@ function saveEdit(){
   oldRel.forEach(function(rid){if(newRel.indexOf(rid)<0){var rr=DRAWINGS.find(function(x){return x.id===rid});if(rr)rr.related=(rr.related||[]).filter(function(i){return i!==orig.id});}});
   newRel.forEach(function(rid){if(oldRel.indexOf(rid)<0){var rr=DRAWINGS.find(function(x){return x.id===rid});if(rr){if(!rr.related)rr.related=[];if(rr.related.indexOf(orig.id)<0)rr.related.push(orig.id);}}});
   orig.related=newRel;
-  S.editOpen=false;S.editDwg=null;S.editRelated=[];S.relSearchQ='';saveAll(true);render();
+  S.editOpen=false;S.editDwg=null;S.editRelated=[];S.relSearchQ='';saveAll(true);
+  if(orig.status==='納品済'&&_prevStatus!=='納品済'){openTranscribe(orig.id);return;}
+  render();
 }
 
 // Master management
