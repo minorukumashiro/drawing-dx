@@ -1488,6 +1488,23 @@ function render(){
     }
   }
 
+  // 納品カレンダー 転記データ編集モーダル
+  if(S.editDelivOpen){
+    var de=DELIVERIES.find(function(x){return x.id===S.editDelivId;});
+    if(de){
+      var deImg=deliveryThumbData(de.drawingId);
+      var deDrawing=DRAWINGS.find(function(x){return x.id===de.drawingId;});
+      h+='<div class="modal-bg" onclick="closeDeliveryEdit()"><div class="modal" onclick="event.stopPropagation()"><div class="modal-head"><h2>納品カレンダー 転記データ編集</h2><button class="close-btn" onclick="closeDeliveryEdit()">&times;</button></div><div style="padding:18px 22px">';
+      h+='<div style="font-size:12px;color:var(--tx3);margin-bottom:12px">カレンダーに転記済みの内容を修正できます。間違えて登録した場合は【削除】してください。'+(deDrawing?'':'<br><span style="color:#B06E15">※ 元の図面は削除されています（この転記データのみ残っています）。</span>')+'</div>';
+      h+='<div style="text-align:center;margin-bottom:14px;background:var(--bg2);border-radius:var(--r);padding:12px;min-height:80px">'+(deImg?'<img src="'+deImg+'" style="max-width:180px;max-height:160px;object-fit:contain">':'<div style="font-size:11px;color:var(--tx3);padding:30px">サムネイル画像なし</div>')+'</div>';
+      h+='<div class="f-row"><div class="f-field"><label>納品日付</label><input id="edDate" type="date" value="'+esc(de.date||'')+'"></div><div class="f-field"><label>取引先</label><input id="edClient" value="'+esc(de.client||'')+'"></div></div>';
+      h+='<div class="f-row"><div class="f-field"><label>図面番号</label><input id="edNumber" value="'+esc(de.number||'')+'"></div><div class="f-field"><label>図面名称</label><input id="edName" value="'+esc(de.name||'')+'"></div></div>';
+      h+='<div class="f-row"><div class="f-field"><label>サイズ</label><input id="edSize" value="'+esc(de.size||'')+'"></div><div class="f-field"><label>数量</label><input id="edQty" type="number" value="'+esc(String(de.qty==null?'':de.qty))+'" onwheel="this.blur()"></div></div>';
+      h+='<div class="f-row"><div class="f-field"><label>単価</label><input id="edPrice" type="number" value="'+esc(String(de.price==null?'':de.price))+'" onwheel="this.blur()"></div><div class="f-field">'+(deDrawing?'<label>&nbsp;</label><button onclick="closeDeliveryEdit();openDetail('+deDrawing.id+')" style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);font-size:12px;cursor:pointer">図面詳細を開く</button>':'')+'</div></div>';
+      h+='</div><div class="modal-foot" style="justify-content:space-between"><button onclick="deleteDeliveryEntry('+de.id+')" style="padding:9px 18px;border-radius:8px;border:none;background:var(--rd2);color:var(--rd);font-size:13px;font-weight:600;cursor:pointer">削除</button><div style="display:flex;gap:8px"><button class="btn-cancel" onclick="closeDeliveryEdit()">キャンセル</button><button class="btn-save" onclick="saveDeliveryEdit()">保存</button></div></div></div></div>';
+    }
+  }
+
   // VERIFY MODAL
   if(S.verifyOpen){
     var stC2={"検討中":"#185FA5","見積済":"#B06E15","製造中":"var(--ac)","完了":"#0E7490","納品済":"#1B8C65"};
@@ -2005,7 +2022,30 @@ function confirmTranscribe(){
 function calNav(delta){if(S.calYear==null){var n=new Date();S.calYear=n.getFullYear();S.calMonth=n.getMonth();}S.calMonth+=delta;while(S.calMonth<0){S.calMonth+=12;S.calYear--;}while(S.calMonth>11){S.calMonth-=12;S.calYear++;}render();}
 function calToday(){var n=new Date();S.calYear=n.getFullYear();S.calMonth=n.getMonth();render();}
 // カレンダー上の納品エントリをクリック → 図面詳細（削除済みなら案内）
-function openDeliveryEntry(entryId){var e=DELIVERIES.find(function(x){return x.id===entryId;});if(!e)return;var d=DRAWINGS.find(function(x){return x.id===e.drawingId;});if(d){openDetail(d.id);}else{if(confirm('この図面は削除されています。納品カレンダーから転記データを削除しますか？')){DELIVERIES=DELIVERIES.filter(function(x){return x.id!==entryId;});saveAll(true);render();}}}
+function openDeliveryEntry(entryId){var e=DELIVERIES.find(function(x){return x.id===entryId;});if(!e)return;S.editDelivOpen=true;S.editDelivId=entryId;S.detail=null;render();}
+function closeDeliveryEdit(){S.editDelivOpen=false;S.editDelivId=null;render();}
+function saveDeliveryEdit(){
+  var e=DELIVERIES.find(function(x){return x.id===S.editDelivId;});if(!e){closeDeliveryEdit();return;}
+  var g=function(id){var el=document.getElementById(id);return el?el.value:'';};
+  var qtyV=g('edQty');var priceV=g('edPrice');
+  e.date=g('edDate')||e.date;
+  e.client=g('edClient').trim();
+  e.number=g('edNumber').trim();
+  e.name=g('edName').trim();
+  e.size=g('edSize').trim();
+  e.qty=qtyV===''?'':(parseInt(qtyV)||0);
+  e.price=priceV===''?'':(parseFloat(priceV)||0);
+  var dt=new Date(e.date);if(!isNaN(dt)){S.calYear=dt.getFullYear();S.calMonth=dt.getMonth();}
+  saveAll(true);
+  S.editDelivOpen=false;S.editDelivId=null;render();
+}
+function deleteDeliveryEntry(entryId){
+  var e=DELIVERIES.find(function(x){return x.id===entryId;});if(!e)return;
+  if(!confirm('この納品データをカレンダーから削除しますか？\n（図面自体は削除されません）'))return;
+  DELIVERIES=DELIVERIES.filter(function(x){return x.id!==entryId;});
+  saveAll(true);
+  S.editDelivOpen=false;S.editDelivId=null;render();
+}
 // 納品カレンダーをExcel(月めくり+サムネイル埋め込み)で書き出し
 function exportDeliveryExcel(){
   if(typeof ExcelJS==='undefined'){alert('Excelライブラリの読み込みに失敗しました。通信環境を確認して再読み込みしてください。');return;}
