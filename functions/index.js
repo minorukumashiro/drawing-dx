@@ -50,7 +50,7 @@ exports.chat = onRequest({
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { messages, drawings } = req.body || {};
+  const { messages, drawings, image } = req.body || {};
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: 'messages is required' });
   }
@@ -78,6 +78,7 @@ exports.chat = onRequest({
           '・登録済みの単価を根拠に、新規図面のおおよその見積り目安を提案する',
           '・取引先ごと・材質ごと・ステータスごとの集計や傾向をまとめる',
           '・機械加工やホーニングに関する一般的な技術相談に答える',
+          '・図面画像が添付された場合は、その画像から寸法・公差・面粗さ・材質・注記などを読み取って答える（読み取れない箇所は「画像から判読できません」と伝える）',
           '',
           '答え方の原則:',
           '・図面データに基づく回答では、根拠にした図番を必ず示す',
@@ -99,6 +100,19 @@ exports.chat = onRequest({
         role: m.role === 'assistant' ? 'assistant' : 'user',
         content: String(m.content)
       }));
+
+    // 図面画像が添付されていれば、最後のユーザー発言に画像を付ける（Claudeが図面を読む）
+    if (image && typeof image === 'string' && apiMessages.length) {
+      const m = image.match(/^data:(image\/(?:jpeg|png|webp|gif));base64,(.+)$/);
+      if (m) {
+        const last = apiMessages[apiMessages.length - 1];
+        const txt = typeof last.content === 'string' ? last.content : '';
+        last.content = [
+          { type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } },
+          { type: 'text', text: txt || 'この図面について答えてください。' }
+        ];
+      }
+    }
 
     const resp = await anthropic.messages.create({
       model: 'claude-opus-4-8',
