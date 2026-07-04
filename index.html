@@ -180,6 +180,10 @@ body{font-family:var(--font);background:var(--bg2);color:var(--tx);line-height:1
 .empty-msg{text-align:center;padding:2.5rem;color:var(--tx3);font-size:13px}
 canvas{display:block;border-radius:var(--r);border:1px solid var(--bd)}
 
+/* Toast */
+.toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--tx);color:var(--bg);padding:11px 22px;border-radius:24px;font-size:13px;font-weight:600;box-shadow:var(--shadow-lg);z-index:9999;opacity:0;transition:all .25s ease;pointer-events:none;white-space:nowrap;max-width:90vw;overflow:hidden;text-overflow:ellipsis}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
 /* Responsive */
 @media(max-width:768px){.kpi-row{grid-template-columns:repeat(2,1fr)}.board{grid-template-columns:1fr 1fr}.nav-tabs{margin-left:0;width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;flex-wrap:nowrap}.f-row{grid-template-columns:1fr}.side{width:100%;max-width:100vw}}
 @media(max-width:500px){.board{grid-template-columns:1fr}.grid{grid-template-columns:1fr}.sim-wrap{min-width:80px}.res-price{display:none}.nav{padding:12px 14px}.nav-tabs{gap:2px;padding:2px}.nav-tab{padding:6px 10px;font-size:11px}.kpi-row{grid-template-columns:1fr 1fr}.kpi-val{font-size:20px}.side-actions{flex-wrap:wrap}.side-actions button{min-width:60px;font-size:11px;padding:8px 0}.app{padding:12px}}
@@ -1176,6 +1180,7 @@ function simColor(v){return v>=80?"#1B8C65":v>=50?"#B06E15":"#888"}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}
 function isMobileDevice(){return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)||window.innerWidth<=768}
 var S={tab:'board',search:'',wbSearch:'',wbSearchInput:'',clientFilter:'',fcat:'すべて',minSim:0,sel:null,results:null,searching:false,detail:null,regOpen:false,regPrev:null,regName:'',regBlobUrl:null,regIsPdf:false,ocrSt:'idle',ocrF:{},invType:'見積書',invDrawing:null,invSearch:'',annoDrawing:null,annoSearch:'',annoPage:1,annoPageCount:0,annoTool:'pen',annoColor:'#C03030',annoStamps:[],annoQRs:[],annoTexts:[],annoLines:[],editOpen:false,editDwg:null,viewerId:null,bulkOpen:false,bulkItems:[],bulkSelected:0,verifyOpen:false};
+try{var _bc=localStorage.getItem('dxp_boardCollapsed');if(_bc)S.boardCollapsed=JSON.parse(_bc);}catch(e){}
 
 function render(){
   var app=document.getElementById('app'),sts=["検討中","見積済","製造中","完了","納品済"],stC={"検討中":"#185FA5","見積済":"#B06E15","製造中":"var(--ac)","完了":"#0E7490","納品済":"#1B8C65"},stB={"検討中":"#E6F1FB","見積済":"#FDF3E0","製造中":"#EEEDFE","完了":"#E0F7FA","納品済":"#E8F5EE"},cats=["すべて"].concat(Array.from(new Set(DRAWINGS.map(function(d){return d.cat}))));
@@ -1199,7 +1204,7 @@ function render(){
   // Storage usage
   try{var imgCount=Object.keys(scannedImages).length;
   h+='<div style="position:absolute;right:20px;top:70px;font-size:9px;color:var(--tx3)">💾 IndexedDB: 図面'+DRAWINGS.length+'件 / 画像'+imgCount+'件</div>'}catch(e){}
-  [{l:'総図面数',v:DRAWINGS.length,u:'件'},{l:'進行中',v:DRAWINGS.filter(function(d){return d.status==='製造中'||d.status==='検討中'}).length,u:'件'},{l:'納品済',v:DRAWINGS.filter(function(d){return d.status==='納品済'}).length,u:'件'},{l:'帳票発行',v:INVOICES.length,u:'件'}].forEach(function(k){h+='<div class="kpi"><div class="kpi-label">'+k.l+'</div><div class="kpi-val">'+k.v+'<small> '+k.u+'</small></div></div>'});
+  [{l:'総図面数',v:DRAWINGS.length,u:'件',t:'list'},{l:'進行中',v:DRAWINGS.filter(function(d){return d.status==='製造中'||d.status==='検討中'}).length,u:'件',t:'board'},{l:'納品済',v:DRAWINGS.filter(function(d){return d.status==='納品済'}).length,u:'件',t:'delivery'},{l:'帳票発行',v:INVOICES.length,u:'件',t:(_mobile?null:'invoice')}].forEach(function(k){var click=k.t?' onclick="setTab(\''+k.t+'\')" style="cursor:pointer"':'';h+='<div class="kpi"'+click+'><div class="kpi-label">'+k.l+'</div><div class="kpi-val">'+k.v+'<small> '+k.u+'</small></div></div>'});
   h+='</div>';
 
   // BOARD
@@ -1216,52 +1221,80 @@ function render(){
     var byDay={};
     DELIVERIES.forEach(function(e){if(!e.date)return;var dt=new Date(e.date);if(dt.getFullYear()!==cy||dt.getMonth()!==cm)return;var day=parseInt(String(e.date).slice(8,10),10);(byDay[day]=byDay[day]||[]).push(e);});
     var monthCount=Object.keys(byDay).reduce(function(s,k){return s+byDay[k].length},0);
+    var monthTotal=Object.keys(byDay).reduce(function(s,k){return s+byDay[k].reduce(function(s2,e){var q=Number(e.qty)||0,p=Number(e.price)||0;return s2+q*p;},0);},0);
     h+='<div class="section-title">納品カレンダー</div>';
     h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">';
     h+='<button onclick="calNav(-1)" style="padding:8px 14px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--tx);font-size:13px;cursor:pointer">‹ 前月</button>';
-    h+='<div style="font-size:18px;font-weight:700;min-width:150px;text-align:center">'+cy+'年 '+(cm+1)+'月</div>';
+    h+='<div style="font-size:18px;font-weight:700;min-width:'+(_mobile?'110px':'150px')+';text-align:center">'+cy+'年 '+(cm+1)+'月</div>';
     h+='<button onclick="calNav(1)" style="padding:8px 14px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--tx);font-size:13px;cursor:pointer">翌月 ›</button>';
     h+='<button onclick="calToday()" style="padding:8px 14px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);font-size:12px;cursor:pointer">今月</button>';
-    h+='<span style="font-size:12px;color:var(--tx3);margin-left:4px">納品 '+monthCount+'件</span>';
     h+='<div style="flex:1"></div>';
     h+='<button onclick="exportDeliveryExcel()" style="padding:9px 18px;border-radius:8px;border:none;background:#1B8C65;color:#fff;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">📥 Excelダウンロード</button>';
     h+='</div>';
-    // 未転記の納品済（納品済にしたが転記していない図面）
+    // 月間サマリー
+    h+='<div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">';
+    h+='<div style="flex:1;min-width:130px;background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:12px 16px;box-shadow:var(--shadow)"><div style="font-size:10px;color:var(--tx3);font-weight:500">当月納品件数</div><div style="font-size:20px;font-weight:700;color:#1B8C65">'+monthCount+'<small style="font-size:11px;font-weight:400;color:var(--tx3)"> 件</small></div></div>';
+    h+='<div style="flex:1;min-width:130px;background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:12px 16px;box-shadow:var(--shadow)"><div style="font-size:10px;color:var(--tx3);font-weight:500">当月納品金額（数量×単価）</div><div style="font-size:20px;font-weight:700">¥'+monthTotal.toLocaleString()+'</div></div>';
+    h+='</div>';
+    // 未転記の納品済（折りたたみ式・スマホは初期折りたたみ）
     var _untrans=DRAWINGS.filter(function(d){return d.status==='納品済'&&!DELIVERIES.some(function(e){return e.drawingId===d.id;});});
     if(_untrans.length){
-      h+='<div style="background:#FFF7E6;border:1px solid #F0AD4E;border-radius:var(--r);padding:12px 14px;margin-bottom:14px">';
-      h+='<div style="font-size:12px;font-weight:700;color:#B06E15;margin-bottom:8px">📥 未転記の納品済 図面（'+_untrans.length+'件）<span style="font-weight:400;color:var(--tx2);font-size:11px;margin-left:6px">納品済にしたがカレンダー未転記の図面です。「転記」で追加できます。</span></div>';
-      h+='<div style="display:flex;flex-direction:column;gap:6px">';
-      _untrans.forEach(function(d){
-        h+='<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--bg);border:1px solid var(--bd);border-radius:8px;font-size:12px"><div style="min-width:0;flex:1"><span style="font-weight:700;color:var(--tx)">'+esc(d.number||'')+'</span> <span style="color:var(--tx2)">'+esc(d.name||'')+'</span><div style="font-size:10px;color:var(--tx3)">'+esc(d.client||'')+(d.lastAccess?' / 納品日 '+esc(d.lastAccess):'')+'</div></div><button style="padding:6px 14px;border-radius:8px;border:none;background:#1B8C65;color:#fff;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap" onclick="openTranscribe('+d.id+')">転記</button></div>';
-      });
-      h+='</div></div>';
-    }
-    // 曜日ヘッダ
-    var dows=['日','月','火','水','木','金','土'];
-    h+='<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px">';
-    dows.forEach(function(w,i){var col=i===0?'#D70015':(i===6?'#185FA5':'var(--tx2)');h+='<div style="text-align:center;font-size:12px;font-weight:700;color:'+col+';padding:4px 0">'+w+'</div>';});
-    h+='</div>';
-    // 日付グリッド
-    h+='<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px">';
-    var totalCells=Math.ceil((startDow+daysInMonth)/7)*7;
-    for(var ci=0;ci<totalCells;ci++){
-      var dayNum=ci-startDow+1;
-      if(dayNum<1||dayNum>daysInMonth){h+='<div style="min-height:110px;border-radius:8px;background:var(--bg2);opacity:.4"></div>';continue;}
-      var dow=ci%7;var dnColor=dow===0?'#D70015':(dow===6?'#185FA5':'var(--tx)');
-      var isToday=(cy===_now.getFullYear()&&cm===_now.getMonth()&&dayNum===_now.getDate());
-      var entries=byDay[dayNum]||[];
-      h+='<div style="min-height:110px;border:1px solid '+(isToday?'var(--ac)':'var(--bd)')+';border-radius:8px;background:var(--bg);padding:5px;overflow:hidden">';
-      h+='<div style="font-size:12px;font-weight:700;color:'+dnColor+';margin-bottom:4px">'+dayNum+(isToday?' <span style="font-size:9px;color:var(--ac)">今日</span>':'')+'</div>';
-      entries.forEach(function(e){
-        var td=deliveryThumbData(e.drawingId);
-        var img=td?'<img src="'+td+'" style="width:34px;height:34px;object-fit:contain;background:#fff;border:1px solid var(--bd);border-radius:4px;flex-shrink:0">':'<div style="width:34px;height:34px;background:var(--bg2);border-radius:4px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:8px;color:var(--tx3)">図</div>';
-        h+='<div onclick="openDeliveryEntry('+e.id+')" title="クリックで詳細" style="display:flex;gap:5px;align-items:center;background:#E8F5EE;border:1px solid #1B8C6533;border-radius:6px;padding:3px;margin-bottom:4px;cursor:pointer">'+img+'<div style="min-width:0;flex:1"><div style="font-size:10px;font-weight:700;color:#1B8C65;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(e.number||'')+'</div><div style="font-size:9px;color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(e.client||'')+'</div><div style="font-size:9px;color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(e.qty?esc(String(e.qty))+'個':'')+(e.price?' ¥'+Number(e.price).toLocaleString():'')+'</div></div></div>';
-      });
+      var _uOpen=(S.untransOpen==null)?!_mobile:S.untransOpen;
+      h+='<div style="background:#FFF7E608;border:1px solid #F0AD4E;border-radius:var(--r);margin-bottom:14px;overflow:hidden">';
+      h+='<div onclick="S.untransOpen='+(!_uOpen)+';render()" style="display:flex;align-items:center;gap:8px;padding:12px 14px;cursor:pointer;user-select:none"><span style="display:inline-block;font-size:10px;color:#F0AD4E;transform:rotate('+(_uOpen?'0deg':'-90deg')+')">▼</span><span style="font-size:12px;font-weight:700;color:#F0AD4E">📥 未転記の納品済 図面（'+_untrans.length+'件）</span><span style="font-weight:400;color:var(--tx3);font-size:11px">'+(_uOpen?'タップで閉じる':'タップで表示')+'</span></div>';
+      if(_uOpen){
+        h+='<div style="display:flex;flex-direction:column;gap:6px;padding:0 14px 12px;max-height:320px;overflow-y:auto">';
+        _untrans.forEach(function(d){
+          h+='<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--bg);border:1px solid var(--bd);border-radius:8px;font-size:12px"><div style="min-width:0;flex:1"><span style="font-weight:700;color:var(--tx)">'+esc(d.number||'')+'</span> <span style="color:var(--tx2)">'+esc(d.name||'')+'</span><div style="font-size:10px;color:var(--tx3)">'+esc(d.client||'')+(d.lastAccess?' / 納品日 '+esc(d.lastAccess):'')+'</div></div><button style="padding:6px 14px;border-radius:8px;border:none;background:#1B8C65;color:#fff;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap" onclick="openTranscribe('+d.id+')">転記</button></div>';
+        });
+        h+='</div>';
+      }
       h+='</div>';
     }
-    h+='</div>';
-    if(monthCount===0)h+='<div style="text-align:center;color:var(--tx3);font-size:13px;padding:20px">この月の納品はまだありません。図面を【納品済】に変更すると転記確認が表示されます。</div>';
+    var dows=['日','月','火','水','木','金','土'];
+    if(_mobile){
+      // ===== スマホ: 日付ごとのリスト表示 =====
+      var dayKeys=Object.keys(byDay).map(Number).sort(function(a,b){return a-b;});
+      if(dayKeys.length===0){
+        h+='<div style="text-align:center;color:var(--tx3);font-size:13px;padding:30px 20px;background:var(--bg);border:1px dashed var(--bd);border-radius:var(--r)">この月の納品はまだありません。<br>図面を【納品済】に変更すると転記確認が表示されます。</div>';
+      }
+      dayKeys.forEach(function(day){
+        var dow=new Date(cy,cm,day).getDay();
+        var dowCol=dow===0?'#FF6B6B':(dow===6?'#5B9BD5':'var(--tx2)');
+        var isToday=(cy===_now.getFullYear()&&cm===_now.getMonth()&&day===_now.getDate());
+        h+='<div style="display:flex;align-items:baseline;gap:8px;margin:16px 2px 8px"><span style="font-size:17px;font-weight:700;color:'+(isToday?'var(--ac)':'var(--tx)')+'">'+(cm+1)+'/'+day+'</span><span style="font-size:12px;font-weight:600;color:'+dowCol+'">('+dows[dow]+')</span>'+(isToday?'<span style="font-size:10px;font-weight:700;color:var(--ac);background:var(--ac2);padding:1px 8px;border-radius:8px">今日</span>':'')+'<span style="flex:1;border-bottom:1px solid var(--bd)"></span><span style="font-size:11px;color:var(--tx3)">'+byDay[day].length+'件</span></div>';
+        byDay[day].forEach(function(e){
+          var td=deliveryThumbData(e.drawingId);
+          var img=td?'<img src="'+td+'" style="width:52px;height:52px;object-fit:contain;background:#fff;border-radius:6px;flex-shrink:0">':'<div style="width:52px;height:52px;background:var(--bg2);border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--tx3)">図</div>';
+          h+='<div onclick="openDeliveryEntry('+e.id+')" style="display:flex;gap:10px;align-items:center;background:var(--bg);border:1px solid var(--bd);border-left:3px solid #1B8C65;border-radius:10px;padding:10px;margin-bottom:8px;cursor:pointer;box-shadow:var(--shadow)">'+img+'<div style="min-width:0;flex:1"><div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(e.number||'')+'</div><div style="font-size:11px;color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(e.name||'')+'</div><div style="font-size:11px;color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(e.client||'')+'</div></div><div style="text-align:right;flex-shrink:0"><div style="font-size:12px;font-weight:700;color:#1B8C65">'+(e.qty?esc(String(e.qty))+'個':'')+'</div><div style="font-size:11px;color:var(--tx2)">'+(e.price?'¥'+Number(e.price).toLocaleString():'')+'</div></div></div>';
+        });
+      });
+    }else{
+      // ===== PC: 月めくりグリッド =====
+      h+='<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px">';
+      dows.forEach(function(w,i){var col=i===0?'#FF6B6B':(i===6?'#5B9BD5':'var(--tx2)');h+='<div style="text-align:center;font-size:12px;font-weight:700;color:'+col+';padding:4px 0">'+w+'</div>';});
+      h+='</div>';
+      h+='<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px">';
+      var totalCells=Math.ceil((startDow+daysInMonth)/7)*7;
+      for(var ci=0;ci<totalCells;ci++){
+        var dayNum=ci-startDow+1;
+        if(dayNum<1||dayNum>daysInMonth){h+='<div style="min-height:110px;border-radius:8px;background:var(--bg2);opacity:.4"></div>';continue;}
+        var dow=ci%7;var dnColor=dow===0?'#FF6B6B':(dow===6?'#5B9BD5':'var(--tx)');
+        var wkndBg=dow===0?'rgba(255,107,107,.04)':(dow===6?'rgba(91,155,213,.04)':'var(--bg)');
+        var isToday=(cy===_now.getFullYear()&&cm===_now.getMonth()&&dayNum===_now.getDate());
+        var entries=byDay[dayNum]||[];
+        h+='<div style="min-height:110px;border:1px solid '+(isToday?'var(--ac)':'var(--bd)')+';border-radius:8px;background:'+(isToday?'var(--ac2)':wkndBg)+';padding:5px;overflow:hidden">';
+        h+='<div style="font-size:12px;font-weight:700;color:'+dnColor+';margin-bottom:4px">'+dayNum+(isToday?' <span style="font-size:9px;color:var(--ac)">今日</span>':'')+'</div>';
+        entries.forEach(function(e){
+          var td=deliveryThumbData(e.drawingId);
+          var img=td?'<img src="'+td+'" style="width:34px;height:34px;object-fit:contain;background:#fff;border:1px solid var(--bd);border-radius:4px;flex-shrink:0">':'<div style="width:34px;height:34px;background:var(--bg2);border-radius:4px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:8px;color:var(--tx3)">図</div>';
+          h+='<div onclick="openDeliveryEntry('+e.id+')" title="クリックで詳細" style="display:flex;gap:5px;align-items:center;background:#E8F5EE;border:1px solid #1B8C6533;border-radius:6px;padding:3px;margin-bottom:4px;cursor:pointer">'+img+'<div style="min-width:0;flex:1"><div style="font-size:10px;font-weight:700;color:#1B8C65;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(e.number||'')+'</div><div style="font-size:9px;color:#3a5a48;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(e.client||'')+'</div><div style="font-size:9px;color:#5a7a68;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(e.qty?esc(String(e.qty))+'個':'')+(e.price?' ¥'+Number(e.price).toLocaleString():'')+'</div></div></div>';
+        });
+        h+='</div>';
+      }
+      h+='</div>';
+      if(monthCount===0)h+='<div style="text-align:center;color:var(--tx3);font-size:13px;padding:20px">この月の納品はまだありません。図面を【納品済】に変更すると転記確認が表示されます。</div>';
+    }
   }
 
   // SEARCH
@@ -1990,7 +2023,15 @@ function clearAnno(){
   initCV();
 }
 function setTab(t){S.tab=t;render()}
-function toggleBoardCol(st){if(!S.boardCollapsed)S.boardCollapsed={};S.boardCollapsed[st]=!S.boardCollapsed[st];render();}
+function toggleBoardCol(st){if(!S.boardCollapsed)S.boardCollapsed={};S.boardCollapsed[st]=!S.boardCollapsed[st];try{localStorage.setItem('dxp_boardCollapsed',JSON.stringify(S.boardCollapsed));}catch(e){}render();}
+function toast(msg){
+  var el=document.getElementById('dxpToast');
+  if(!el){el=document.createElement('div');el.id='dxpToast';el.className='toast';document.body.appendChild(el);}
+  el.textContent=msg;
+  clearTimeout(window._toastTimer);
+  requestAnimationFrame(function(){el.classList.add('show');});
+  window._toastTimer=setTimeout(function(){el.classList.remove('show');},2200);
+}
 function openDetail(id){var d=DRAWINGS.find(function(x){return x.id===id});if(d){S.detail=Object.assign({},d,{_sim:0});render()}}
 function closeDetail(){S.detail=null;render()}
 function changeStatus(id,newStatus){var d=DRAWINGS.find(function(x){return x.id===id});if(!d)return;var prev=d.status;d.status=newStatus;if(newStatus==='納品済')d.lastAccess=new Date().toISOString().slice(0,10);if(S.detail&&S.detail.id===id){S.detail.status=newStatus;if(newStatus==='納品済')S.detail.lastAccess=d.lastAccess;}saveAll(true);if(newStatus==='納品済'&&prev!=='納品済'){openTranscribe(id);}else{render();}}
@@ -2029,6 +2070,7 @@ function confirmTranscribe(){
   var dt=new Date(entry.date);if(!isNaN(dt)){S.calYear=dt.getFullYear();S.calMonth=dt.getMonth();}
   S.tab='delivery';
   render();
+  toast(ex?'転記内容を更新しました':'納品カレンダーに転記しました');
 }
 // カレンダー操作
 function calNav(delta){if(S.calYear==null){var n=new Date();S.calYear=n.getFullYear();S.calMonth=n.getMonth();}S.calMonth+=delta;while(S.calMonth<0){S.calMonth+=12;S.calYear--;}while(S.calMonth>11){S.calMonth-=12;S.calYear++;}render();}
@@ -2050,6 +2092,7 @@ function saveDeliveryEdit(){
   var dt=new Date(e.date);if(!isNaN(dt)){S.calYear=dt.getFullYear();S.calMonth=dt.getMonth();}
   saveAll(true);
   S.editDelivOpen=false;S.editDelivId=null;render();
+  toast('納品データを保存しました');
 }
 function deleteDeliveryEntry(entryId){
   var e=DELIVERIES.find(function(x){return x.id===entryId;});if(!e)return;
@@ -2057,6 +2100,7 @@ function deleteDeliveryEntry(entryId){
   DELIVERIES=DELIVERIES.filter(function(x){return x.id!==entryId;});
   saveAll(true);
   S.editDelivOpen=false;S.editDelivId=null;render();
+  toast('納品データを削除しました');
 }
 // 納品カレンダーをExcel(月めくり+サムネイル埋め込み)で書き出し
 function exportDeliveryExcel(){
@@ -2129,17 +2173,24 @@ function exportDeliveryExcel(){
   }
   // ===== シート2: 納品明細(全項目+サムネイル) =====
   var ds=wb.addWorksheet('納品明細');
-  var cols=[{h:'サムネイル',w:14},{h:'納品日付',w:13},{h:'取引先',w:20},{h:'図面番号',w:16},{h:'図面名称',w:26},{h:'サイズ',w:18},{h:'数量',w:9},{h:'単価',w:12}];
+  var cols=[{h:'サムネイル',w:14},{h:'納品日付',w:13},{h:'取引先',w:20},{h:'図面番号',w:16},{h:'図面名称',w:26},{h:'サイズ',w:18},{h:'数量',w:9},{h:'単価',w:12},{h:'金額',w:13}];
   cols.forEach(function(c,i){ds.getColumn(i+1).width=c.w;});
   var dhr=ds.getRow(1);dhr.height=22;
   cols.forEach(function(c,i){var cc=ds.getCell(1,i+1);cc.value=c.h;cc.font={bold:true,color:{argb:'FFFFFFFF'}};cc.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF1B8C65'}};cc.alignment={horizontal:'center',vertical:'middle'};cc.border={top:{style:'thin'},left:{style:'thin'},right:{style:'thin'},bottom:{style:'thin'}};});
+  var sumQty=0,sumAmt=0;
   monthEntries.forEach(function(e,idx){
     var r=idx+2;var row=ds.getRow(r);row.height=54;
-    var vals=['',e.date||'',e.client||'',e.number||'',e.name||'',e.size||'',e.qty===''||e.qty==null?'':e.qty,e.price===''||e.price==null?'':e.price];
-    vals.forEach(function(v,ci){var cc=ds.getCell(r,ci+1);cc.value=v;cc.alignment={vertical:'middle',wrapText:true,horizontal:(ci>=6?'right':'left')};cc.border={top:{style:'thin',color:{argb:'FFDDDDDD'}},left:{style:'thin',color:{argb:'FFDDDDDD'}},right:{style:'thin',color:{argb:'FFDDDDDD'}},bottom:{style:'thin',color:{argb:'FFDDDDDD'}}};if(ci===7&&v!=='')cc.numFmt='¥#,##0';});
+    var q=Number(e.qty)||0,p=Number(e.price)||0;var amt=(e.qty!==''&&e.qty!=null&&e.price!==''&&e.price!=null)?q*p:'';
+    sumQty+=q;if(amt!=='')sumAmt+=amt;
+    var vals=['',e.date||'',e.client||'',e.number||'',e.name||'',e.size||'',e.qty===''||e.qty==null?'':e.qty,e.price===''||e.price==null?'':e.price,amt];
+    vals.forEach(function(v,ci){var cc=ds.getCell(r,ci+1);cc.value=v;cc.alignment={vertical:'middle',wrapText:true,horizontal:(ci>=6?'right':'left')};cc.border={top:{style:'thin',color:{argb:'FFDDDDDD'}},left:{style:'thin',color:{argb:'FFDDDDDD'}},right:{style:'thin',color:{argb:'FFDDDDDD'}},bottom:{style:'thin',color:{argb:'FFDDDDDD'}}};if(ci>=7&&v!=='')cc.numFmt='¥#,##0';});
     var imgId2=addImg(deliveryThumbData(e.drawingId));
     if(imgId2>=0){ds.addImage(imgId2,{tl:{col:0.1,row:r-1+0.1},ext:{width:64,height:48}});}
   });
+  // 合計行
+  var tr=monthEntries.length+2;var trow=ds.getRow(tr);trow.height=24;
+  var tvals=['','','','','','合計',sumQty,'',sumAmt];
+  tvals.forEach(function(v,ci){var cc=ds.getCell(tr,ci+1);cc.value=v;cc.font={bold:true};cc.alignment={vertical:'middle',horizontal:(ci>=6?'right':'left')};cc.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE8F5EE'}};cc.border={top:{style:'double'},left:{style:'thin',color:{argb:'FFDDDDDD'}},right:{style:'thin',color:{argb:'FFDDDDDD'}},bottom:{style:'thin',color:{argb:'FFDDDDDD'}}};if(ci===8)cc.numFmt='¥#,##0';});
   // ダウンロード
   wb.xlsx.writeBuffer().then(function(buf){
     var blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
@@ -3497,6 +3548,7 @@ function saveEdit(){
   S.editOpen=false;S.editDwg=null;S.editRelated=[];S.relSearchQ='';saveAll(true);
   if(orig.status==='納品済'&&_prevStatus!=='納品済'){openTranscribe(orig.id);return;}
   render();
+  toast('図面情報を保存しました');
 }
 
 // Master management
