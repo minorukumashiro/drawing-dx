@@ -1502,11 +1502,9 @@ function render(){
     h+='</div>';
     h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px">';
     var masterSections=[
-      {key:'categories',label:'カテゴリ',ph:'例: ギア'},
       {key:'materials',label:'材質',ph:'例: SUS420'},
       {key:'clients',label:'取引先',ph:'例: 山田製作所'},
-      {key:'statuses',label:'ステータス',ph:'例: 出荷済'},
-      {key:'surfaces',label:'表面処理',ph:'例: 硬質クロム'}
+      {key:'statuses',label:'ステータス',ph:'例: 出荷済'}
     ];
     masterSections.forEach(function(sec){
       h+='<div style="background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:16px">';
@@ -1519,15 +1517,6 @@ function render(){
       });
       h+='</div></div>';
     });
-    // Shapes (special: has value + label)
-    h+='<div style="background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:16px">';
-    h+='<div style="font-weight:600;font-size:13px;margin-bottom:10px;color:var(--tx)">形状<span style="font-weight:400;font-size:11px;color:var(--tx3);margin-left:6px">('+MASTERS.shapes.length+'件)</span></div>';
-    h+='<div style="display:flex;gap:6px;margin-bottom:10px"><input id="mi_shapes_v" placeholder="値: gear" style="flex:1;padding:6px 10px;border:1px solid var(--bd);border-radius:6px;font-size:12px"><input id="mi_shapes_l" placeholder="表示名: ギア" style="flex:1;padding:6px 10px;border:1px solid var(--bd);border-radius:6px;font-size:12px"><button class="g-btn" style="padding:6px 12px;font-size:11px" onclick="addShape()">追加</button></div>';
-    h+='<div style="display:flex;flex-wrap:wrap;gap:4px">';
-    MASTERS.shapes.forEach(function(s,idx){
-      h+='<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:var(--bg2);border:1px solid var(--bd);border-radius:12px;font-size:11px;color:var(--tx2)">'+esc(s.l)+' ('+esc(s.v)+')<button onclick="delMaster(\'shapes\','+idx+')" style="background:none;border:none;cursor:pointer;color:var(--rd);font-size:13px;padding:0;line-height:1">&times;</button></span>';
-    });
-    h+='</div></div>';
     h+='</div>';
     // Add datalist for materials
     h+='<datalist id="matList">';MASTERS.materials.forEach(function(m){h+='<option value="'+esc(m)+'">'});h+='</datalist>';
@@ -3612,12 +3601,8 @@ function saveEdit(){
 // Master management
 
 function importMastersFromDrawings(){
-  var added={categories:0,materials:0,clients:0};
+  var added={materials:0,clients:0};
   DRAWINGS.forEach(function(d){
-    // カテゴリ
-    if(d.cat&&d.cat!=='未指定'&&d.cat!=='その他'&&MASTERS.categories.indexOf(d.cat)<0){
-      MASTERS.categories.push(d.cat);added.categories++;
-    }
     // 材質
     if(d.mat&&d.mat!=='未指定'&&MASTERS.materials.indexOf(d.mat)<0){
       MASTERS.materials.push(d.mat);added.materials++;
@@ -3627,10 +3612,10 @@ function importMastersFromDrawings(){
       MASTERS.clients.push(d.client);added.clients++;
     }
   });
-  var total=added.categories+added.materials+added.clients;
+  var total=added.materials+added.clients;
   if(total>0){
     saveAll();render();
-    alert('登録図面からマスターに取込みました:\nカテゴリ +'+added.categories+'件\n材質 +'+added.materials+'件\n取引先 +'+added.clients+'件');
+    alert('登録図面からマスターに取込みました:\n材質 +'+added.materials+'件\n取引先 +'+added.clients+'件');
   }else{
     alert('新しいマスター項目はありませんでした。\n（すべて登録済みです）');
   }
