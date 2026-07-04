@@ -2,11 +2,19 @@ const { onRequest } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const vision = require('@google-cloud/vision');
 const Anthropic = require('@anthropic-ai/sdk');
+const admin = require('firebase-admin');
+
+admin.initializeApp();
 
 const client = new vision.ImageAnnotatorClient();
 
 // Claude APIキーはFirebaseシークレットに保管（index.htmlには絶対に置かない）
 const ANTHROPIC_API_KEY = defineSecret('ANTHROPIC_API_KEY');
+
+// AI相談の利用を許可するメールアドレス（firestore.rulesの許可リストと合わせて管理すること）
+const ALLOWED_EMAILS = [
+  'tokyohoning@gmail.com'
+];
 
 exports.ocrV2 = onRequest({
   region: 'asia-northeast1',
@@ -48,6 +56,22 @@ exports.chat = onRequest({
 }, async (req, res) => {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // ===== 認証: ログイン済み かつ 許可メールのみ利用可 =====
+  const authz = req.headers.authorization || '';
+  const idToken = authz.startsWith('Bearer ') ? authz.slice(7) : null;
+  if (!idToken) {
+    return res.status(401).json({ error: 'ログインが必要です。ページを再読み込みしてログインしてください。' });
+  }
+  let decoded;
+  try {
+    decoded = await admin.auth().verifyIdToken(idToken);
+  } catch (e) {
+    return res.status(401).json({ error: 'ログインの有効期限が切れています。再ログインしてください。' });
+  }
+  if (!decoded.email || !ALLOWED_EMAILS.includes(decoded.email)) {
+    return res.status(403).json({ error: 'このアカウントにはAI相談の利用権限がありません。' });
   }
 
   const { messages, drawings, image } = req.body || {};

@@ -4109,16 +4109,28 @@ render();
     var ctrl=(typeof AbortController!=='undefined')?new AbortController():null;
     var timer=ctrl?setTimeout(function(){ctrl.abort()},125000):null;
 
-    fetch(CHAT_URL,{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({messages:msgs,drawings:drawingsPayload(),image:imgToSend}),
-      signal:ctrl?ctrl.signal:undefined
+    // ログイン中の本人証明トークンを取得（サーバー側で許可メールか検証される）
+    var tokenP;
+    try{
+      var cu=(window.firebase&&firebase.auth)?firebase.auth().currentUser:null;
+      tokenP=cu?cu.getIdToken():Promise.resolve(null);
+    }catch(e){tokenP=Promise.resolve(null)}
+
+    tokenP.then(function(tok){
+      if(!tok){if(timer)clearTimeout(timer);fail('ログイン情報を確認できません。ページを再読み込みしてログインし直してください。');return null;}
+      return fetch(CHAT_URL,{
+        method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
+        body:JSON.stringify({messages:msgs,drawings:drawingsPayload(),image:imgToSend}),
+        signal:ctrl?ctrl.signal:undefined
+      });
     }).then(function(r){
+      if(!r)return null;
       return r.text().then(function(tx){
         var d=null;try{d=JSON.parse(tx)}catch(e){}
         return {ok:r.ok,status:r.status,data:d};
       });
     }).then(function(res){
+      if(!res)return; // トークン無しで中断済み（failで案内表示済み）
       if(timer)clearTimeout(timer);
       if(res.ok&&res.data&&res.data.text){
         busy=false;sendBtn.disabled=false;
