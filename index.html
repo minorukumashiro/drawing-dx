@@ -3930,6 +3930,122 @@ function printHTML(html){
 }
 
 render();
+
+// ========== AI相談ウィジェット（Claude） ==========
+(function(){
+  var CHAT_URL='https://asia-northeast1-drawing-dx.cloudfunctions.net/chat';
+  var msgs=[];      // {role:'user'|'assistant', content}
+  var busy=false;
+
+  // スタイル注入
+  var st=document.createElement('style');
+  st.textContent=[
+    '#aiFab{position:fixed;right:20px;bottom:20px;z-index:9998;width:56px;height:56px;border-radius:50%;background:var(--ac);color:#fff;border:none;box-shadow:var(--shadow-lg);cursor:pointer;font-size:24px;display:none;align-items:center;justify-content:center;transition:transform .15s}',
+    '#aiFab:hover{transform:scale(1.06)}',
+    '#aiPanel{position:fixed;right:20px;bottom:88px;z-index:9999;width:400px;max-width:calc(100vw - 32px);height:560px;max-height:calc(100vh - 120px);background:var(--bg2);border:1px solid var(--bd);border-radius:16px;box-shadow:var(--shadow-lg);display:none;flex-direction:column;overflow:hidden}',
+    '#aiPanel.open{display:flex}',
+    '#aiHead{padding:14px 16px;background:var(--bg3);display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--bd)}',
+    '#aiHead .t{font-weight:700;font-size:14px;color:var(--tx);flex:1}',
+    '#aiHead .s{font-size:11px;color:var(--tx3)}',
+    '#aiHead button{background:none;border:none;color:var(--tx2);cursor:pointer;font-size:18px;padding:2px 6px;border-radius:6px}',
+    '#aiHead button:hover{background:var(--bd);color:var(--tx)}',
+    '#aiBody{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}',
+    '.aiMsg{max-width:85%;padding:10px 13px;border-radius:14px;font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-word}',
+    '.aiMsg.u{align-self:flex-end;background:var(--ac);color:#fff;border-bottom-right-radius:4px}',
+    '.aiMsg.a{align-self:flex-start;background:var(--bg3);color:var(--tx);border-bottom-left-radius:4px}',
+    '.aiMsg.a b{color:var(--ac3)}',
+    '.aiHint{align-self:center;text-align:center;color:var(--tx3);font-size:12px;line-height:1.7;padding:8px}',
+    '.aiChip{display:inline-block;margin:3px;padding:6px 11px;background:var(--bg);border:1px solid var(--bd);border-radius:16px;color:var(--tx2);font-size:12px;cursor:pointer}',
+    '.aiChip:hover{border-color:var(--ac);color:var(--ac3)}',
+    '#aiFoot{padding:10px;border-top:1px solid var(--bd);display:flex;gap:8px;align-items:flex-end}',
+    '#aiInput{flex:1;resize:none;max-height:100px;padding:9px 12px;border-radius:12px;border:1px solid var(--bd);background:var(--bg);color:var(--tx);font-size:13px;font-family:var(--font);outline:none;line-height:1.5}',
+    '#aiSend{width:38px;height:38px;flex:none;border:none;border-radius:10px;background:var(--ac);color:#fff;cursor:pointer;font-size:16px}',
+    '#aiSend:disabled{opacity:.4;cursor:default}',
+    '.aiDots span{display:inline-block;width:6px;height:6px;margin:0 2px;background:var(--tx3);border-radius:50%;animation:aiBlink 1.2s infinite both}',
+    '.aiDots span:nth-child(2){animation-delay:.2s}.aiDots span:nth-child(3){animation-delay:.4s}',
+    '@keyframes aiBlink{0%,80%,100%{opacity:.2}40%{opacity:1}}',
+    '@media(max-width:500px){#aiPanel{right:8px;left:8px;width:auto;bottom:80px;height:calc(100vh - 100px)}#aiFab{right:14px;bottom:14px}}'
+  ].join('');
+  document.head.appendChild(st);
+
+  // DOM生成
+  var fab=document.createElement('button');
+  fab.id='aiFab';fab.title='AIに相談';fab.innerHTML='&#128172;';
+  var panel=document.createElement('div');panel.id='aiPanel';
+  panel.innerHTML=
+    '<div id="aiHead"><div><div class="t">AI相談</div><div class="s">全図面データを見て回答</div></div><button id="aiClear" title="会話をクリア">&#8635;</button><button id="aiClose" title="閉じる">&times;</button></div>'+
+    '<div id="aiBody"></div>'+
+    '<div id="aiFoot"><textarea id="aiInput" rows="1" placeholder="図面や加工について質問..."></textarea><button id="aiSend">&#10148;</button></div>';
+  document.body.appendChild(fab);
+  document.body.appendChild(panel);
+
+  var body=panel.querySelector('#aiBody');
+  var input=panel.querySelector('#aiInput');
+  var sendBtn=panel.querySelector('#aiSend');
+
+  function esc(s){return String(s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]})}
+  function fmt(s){return esc(s).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>')}
+
+  function renderMsgs(){
+    if(msgs.length===0){
+      body.innerHTML='<div class="aiHint">図面データをもとに何でも聞いてください。<br>例えば:</div>'+
+        '<div style="text-align:center">'+
+        ['SUS304で似た図面はある?','取引先ごとの件数を教えて','製造中の案件を一覧にして','この形状の見積り目安は?']
+          .map(function(q){return '<span class="aiChip" data-q="'+esc(q)+'">'+esc(q)+'</span>'}).join('')+
+        '</div>';
+      body.querySelectorAll('.aiChip').forEach(function(c){c.onclick=function(){input.value=c.getAttribute('data-q');send()}});
+      return;
+    }
+    var h='';
+    msgs.forEach(function(m){h+='<div class="aiMsg '+(m.role==='user'?'u':'a')+'">'+(m.role==='user'?esc(m.content):fmt(m.content))+'</div>'});
+    if(busy)h+='<div class="aiMsg a"><span class="aiDots"><span></span><span></span><span></span></span></div>';
+    body.innerHTML=h;
+    body.scrollTop=body.scrollHeight;
+  }
+
+  function drawingsPayload(){
+    try{
+      return (window.DRAWINGS||[]).map(function(d){
+        return {number:d.number,name:d.name,mat:d.mat,size:d.size,client:d.client,price:d.price,status:d.status,cat:d.cat};
+      });
+    }catch(e){return []}
+  }
+
+  function send(){
+    var t=(input.value||'').trim();
+    if(!t||busy)return;
+    msgs.push({role:'user',content:t});
+    input.value='';input.style.height='auto';
+    busy=true;sendBtn.disabled=true;renderMsgs();
+    fetch(CHAT_URL,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({messages:msgs,drawings:drawingsPayload()})
+    }).then(function(r){return r.json()}).then(function(data){
+      busy=false;sendBtn.disabled=false;
+      if(data&&data.text){msgs.push({role:'assistant',content:data.text})}
+      else{msgs.push({role:'assistant',content:'⚠ エラー: '+((data&&data.error)||'応答がありませんでした')})}
+      renderMsgs();
+    }).catch(function(e){
+      busy=false;sendBtn.disabled=false;
+      msgs.push({role:'assistant',content:'⚠ 通信エラー: '+e.message});
+      renderMsgs();
+    });
+  }
+
+  input.addEventListener('input',function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,100)+'px'});
+  input.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
+  sendBtn.onclick=send;
+  panel.querySelector('#aiClose').onclick=function(){panel.classList.remove('open')};
+  panel.querySelector('#aiClear').onclick=function(){msgs=[];renderMsgs()};
+  fab.onclick=function(){panel.classList.toggle('open');if(panel.classList.contains('open')){renderMsgs();setTimeout(function(){input.focus()},50)}};
+
+  // ログイン後にだけボタンを表示
+  var iv=setInterval(function(){
+    if(window._bootStarted&&(typeof AUTH_USER==='undefined'||AUTH_USER)){
+      fab.style.display='flex';clearInterval(iv);
+    }
+  },500);
+})();
 </script>
 </body>
 </html>
