@@ -3940,10 +3940,11 @@ render();
   // スタイル注入
   var st=document.createElement('style');
   st.textContent=[
-    '#aiFab{position:fixed;right:20px;bottom:20px;z-index:9998;width:56px;height:56px;border-radius:50%;background:var(--ac);color:#fff;border:none;box-shadow:var(--shadow-lg);cursor:pointer;font-size:24px;display:none;align-items:center;justify-content:center;transition:transform .15s}',
+    '#aiFab{position:fixed;right:20px;bottom:20px;z-index:90;width:56px;height:56px;border-radius:50%;background:var(--ac);color:#fff;border:none;box-shadow:var(--shadow-lg);cursor:pointer;font-size:24px;display:none;align-items:center;justify-content:center;transition:transform .15s}',
     '#aiFab:hover{transform:scale(1.06)}',
-    '#aiPanel{position:fixed;right:20px;bottom:88px;z-index:9999;width:400px;max-width:calc(100vw - 32px);height:560px;max-height:calc(100vh - 120px);background:var(--bg2);border:1px solid var(--bd);border-radius:16px;box-shadow:var(--shadow-lg);display:none;flex-direction:column;overflow:hidden}',
-    '#aiPanel.open{display:flex}',
+    '#aiPanel{position:fixed;right:20px;bottom:88px;z-index:95;width:400px;max-width:calc(100vw - 32px);height:560px;max-height:calc(100vh - 120px);background:var(--bg2);border:1px solid var(--bd);border-radius:16px;box-shadow:var(--shadow-lg);display:none;flex-direction:column;overflow:hidden}',
+    '#aiPanel.open{display:flex;animation:aiPop .18s ease}',
+    '@keyframes aiPop{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}',
     '#aiHead{padding:14px 16px;background:var(--bg3);display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--bd)}',
     '#aiHead .t{font-weight:700;font-size:14px;color:var(--tx);flex:1}',
     '#aiHead .s{font-size:11px;color:var(--tx3)}',
@@ -3954,6 +3955,9 @@ render();
     '.aiMsg.u{align-self:flex-end;background:var(--ac);color:#fff;border-bottom-right-radius:4px}',
     '.aiMsg.a{align-self:flex-start;background:var(--bg3);color:var(--tx);border-bottom-left-radius:4px}',
     '.aiMsg.a b{color:var(--ac3)}',
+    '.aiMsg.a code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px;color:var(--am)}',
+    '.aiErr{align-self:stretch;text-align:center;background:var(--rd2);border:1px solid var(--rd);border-radius:12px;padding:10px 12px;font-size:12px;color:var(--rd);line-height:1.7}',
+    '.aiBusyLbl{color:var(--tx3);font-size:12px;margin-left:6px}',
     '.aiHint{align-self:center;text-align:center;color:var(--tx3);font-size:12px;line-height:1.7;padding:8px}',
     '.aiChip{display:inline-block;margin:3px;padding:6px 11px;background:var(--bg);border:1px solid var(--bd);border-radius:16px;color:var(--tx2);font-size:12px;cursor:pointer}',
     '.aiChip:hover{border-color:var(--ac);color:var(--ac3)}',
@@ -3991,23 +3995,39 @@ render();
   var attachEl=panel.querySelector('#aiAttachBar');
   var pendingImg=null, pendingLabel='';
 
-  function esc(s){return String(s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]})}
-  function fmt(s){return esc(s).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>')}
+  function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+  function fmt(s){
+    var h=esc(s);
+    h=h.replace(/^#{1,4}\s+(.+)$/gm,'<b>$1</b>');       // 見出し → 太字
+    h=h.replace(/\*\*(.+?)\*\*/g,'<b>$1</b>');           // **太字**
+    h=h.replace(/`([^`\n]+)`/g,'<code>$1</code>');       // `コード`
+    return h;
+  }
+
+  var lastError=null, busyLabel='考え中...';
+
+  function updateSub(){
+    try{var n=(window.DRAWINGS||[]).length;panel.querySelector('#aiHead .s').textContent='全'+n+'件の図面データを参照';}catch(e){}
+  }
 
   function renderMsgs(){
-    if(msgs.length===0){
-      body.innerHTML='<div class="aiHint">図面データをもとに何でも聞いてください。<br>例えば:</div>'+
+    updateSub();
+    var h='';
+    if(msgs.length===0&&!lastError){
+      h='<div class="aiHint">図面データをもとに何でも聞いてください。<br>例えば:</div>'+
         '<div style="text-align:center">'+
         ['SUS304で似た図面はある?','取引先ごとの件数を教えて','製造中の案件を一覧にして','この形状の見積り目安は?']
           .map(function(q){return '<span class="aiChip" data-q="'+esc(q)+'">'+esc(q)+'</span>'}).join('')+
         '</div>';
-      body.querySelectorAll('.aiChip').forEach(function(c){c.onclick=function(){input.value=c.getAttribute('data-q');send()}});
-      return;
+    }else{
+      msgs.forEach(function(m){h+='<div class="aiMsg '+(m.role==='user'?'u':'a')+'">'+(m.role==='user'?esc(m.content):fmt(m.content))+'</div>'});
+      if(busy)h+='<div class="aiMsg a"><span class="aiDots"><span></span><span></span><span></span></span><span class="aiBusyLbl">'+esc(busyLabel)+'</span></div>';
+      if(lastError)h+='<div class="aiErr">⚠ '+esc(lastError)+'<br><span class="aiChip" id="aiRetry">↻ 再送信</span></div>';
     }
-    var h='';
-    msgs.forEach(function(m){h+='<div class="aiMsg '+(m.role==='user'?'u':'a')+'">'+(m.role==='user'?esc(m.content):fmt(m.content))+'</div>'});
-    if(busy)h+='<div class="aiMsg a"><span class="aiDots"><span></span><span></span><span></span></span></div>';
     body.innerHTML=h;
+    body.querySelectorAll('.aiChip[data-q]').forEach(function(c){c.onclick=function(){input.value=c.getAttribute('data-q');send()}});
+    var rt=body.querySelector('#aiRetry');
+    if(rt)rt.onclick=function(){send()};
     body.scrollTop=body.scrollHeight;
   }
 
@@ -4067,31 +4087,60 @@ render();
     var t=(input.value||'').trim();
     if((!t&&!pendingImg)||busy)return;
     if(!t&&pendingImg)t='この図面について、寸法・公差・材質・注記など読み取れることを教えてください。';
+    lastError=null;
     msgs.push({role:'user',content:t});
     input.value='';input.style.height='auto';
-    var imgToSend=pendingImg; // 添付は次の1問に付けて送る
+    var imgToSend=pendingImg, labelToSend=pendingLabel; // 添付は次の1問に付けて送る
     pendingImg=null;pendingLabel='';renderAttach();
-    busy=true;sendBtn.disabled=true;renderMsgs();
+    busy=true;sendBtn.disabled=true;
+    busyLabel=imgToSend?'図面を確認中...':'考え中...';
+    renderMsgs();
+
+    // 失敗時: 会話履歴を汚さず、質問と添付を元に戻して再送できるようにする
+    function fail(msg){
+      busy=false;sendBtn.disabled=false;
+      var last=msgs[msgs.length-1];
+      if(last&&last.role==='user'){msgs.pop();input.value=last.content;}
+      if(imgToSend){pendingImg=imgToSend;pendingLabel=labelToSend;renderAttach();}
+      lastError=msg;
+      renderMsgs();
+    }
+
+    var ctrl=(typeof AbortController!=='undefined')?new AbortController():null;
+    var timer=ctrl?setTimeout(function(){ctrl.abort()},125000):null;
+
     fetch(CHAT_URL,{
       method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({messages:msgs,drawings:drawingsPayload(),image:imgToSend})
-    }).then(function(r){return r.json()}).then(function(data){
-      busy=false;sendBtn.disabled=false;
-      if(data&&data.text){msgs.push({role:'assistant',content:data.text})}
-      else{msgs.push({role:'assistant',content:'⚠ エラー: '+((data&&data.error)||'応答がありませんでした')})}
-      renderMsgs();
+      body:JSON.stringify({messages:msgs,drawings:drawingsPayload(),image:imgToSend}),
+      signal:ctrl?ctrl.signal:undefined
+    }).then(function(r){
+      return r.text().then(function(tx){
+        var d=null;try{d=JSON.parse(tx)}catch(e){}
+        return {ok:r.ok,status:r.status,data:d};
+      });
+    }).then(function(res){
+      if(timer)clearTimeout(timer);
+      if(res.ok&&res.data&&res.data.text){
+        busy=false;sendBtn.disabled=false;
+        msgs.push({role:'assistant',content:res.data.text});
+        renderMsgs();
+      }else{
+        fail((res.data&&res.data.error)||('サーバーエラーが発生しました (HTTP '+res.status+')'));
+      }
     }).catch(function(e){
-      busy=false;sendBtn.disabled=false;
-      msgs.push({role:'assistant',content:'⚠ 通信エラー: '+e.message});
-      renderMsgs();
+      if(timer)clearTimeout(timer);
+      if(e&&e.name==='AbortError')fail('時間内に応答がありませんでした。もう一度お試しください。');
+      else fail('サーバーに接続できません。ネットワークを確認して再送信してください。');
     });
   }
 
   input.addEventListener('input',function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,100)+'px'});
-  input.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
+  // PCはEnterで送信（Shift+Enterで改行）。スマホはEnter=改行、送信はボタンで。
+  input.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey&&!(typeof isMobileDevice==='function'&&isMobileDevice())){e.preventDefault();send()}});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&panel.classList.contains('open'))panel.classList.remove('open')});
   sendBtn.onclick=send;
   panel.querySelector('#aiClose').onclick=function(){panel.classList.remove('open')};
-  panel.querySelector('#aiClear').onclick=function(){msgs=[];pendingImg=null;pendingLabel='';renderAttach();renderMsgs()};
+  panel.querySelector('#aiClear').onclick=function(){msgs=[];pendingImg=null;pendingLabel='';lastError=null;renderAttach();renderMsgs()};
   fab.onclick=function(){panel.classList.toggle('open');if(panel.classList.contains('open')){renderMsgs();setTimeout(function(){input.focus()},50)}};
 
   // ログイン後にだけボタンを表示
