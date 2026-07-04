@@ -13,6 +13,7 @@
 <!-- Firebase SDK (v10 compat for global window usage) -->
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-functions-compat.js"></script>
 <script>if(typeof pdfjsLib!=='undefined'){pdfjsLib.GlobalWorkerOptions.workerSrc='';}</script>
 <style>
@@ -1110,32 +1111,87 @@ var DEF_MASTERS={
   surfaces:["メッキ","アルマイト","黒染め","ニッケル","クロム","亜鉛メッキ","無電解ニッケル","塗装"]
 };
 var MASTERS={};
-{
 // Show loading indicator immediately
 document.getElementById('app').innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:#86868b;font-family:sans-serif"><div style="width:40px;height:40px;border:3px solid #e0e0e0;border-top-color:#0066CC;border-radius:50%;animation:spin 0.8s linear infinite"></div><div style="font-size:13px">読み込み中...</div></div><style>@keyframes spin{to{transform:rotate(360deg)}}</style>';
 
-// Try fast-path: load from localStorage cache for instant first paint
-try{
-  var cached=localStorage.getItem('dxp_fbCache');
-  if(cached){
-    var data=JSON.parse(cached);
-    if(data.drawings&&data.drawings.length){
-      DRAWINGS=data.drawings;
-      if(data.masters)MASTERS=data.masters;
-      if(data.inspections)inspectionReports=data.inspections;
-      if(data.relatedDocuments)relatedDocuments=data.relatedDocuments;
-      if(data.invoices)INVOICES=data.invoices;
-      if(data.deliveries)DELIVERIES=data.deliveries;
-      if(data.annotations)ANNOTATIONS=data.annotations;
-      if(data.nextId)nextId=data.nextId;
-      window._cacheLoaded=true; // IndexedDB が空でもこのデータを保持する
-      // Render cached data instantly
-      render();
+// ===== 認証 =====
+var AUTH_USER=null;
+function bootApp(){
+  if(window._bootStarted)return;
+  window._bootStarted=true;
+  // Try fast-path: load from localStorage cache for instant first paint
+  try{
+    var cached=localStorage.getItem('dxp_fbCache');
+    if(cached){
+      var data=JSON.parse(cached);
+      if(data.drawings&&data.drawings.length){
+        DRAWINGS=data.drawings;
+        if(data.masters)MASTERS=data.masters;
+        if(data.inspections)inspectionReports=data.inspections;
+        if(data.relatedDocuments)relatedDocuments=data.relatedDocuments;
+        if(data.invoices)INVOICES=data.invoices;
+        if(data.deliveries)DELIVERIES=data.deliveries;
+        if(data.annotations)ANNOTATIONS=data.annotations;
+        if(data.nextId)nextId=data.nextId;
+        window._cacheLoaded=true; // IndexedDB が空でもこのデータを保持する
+        // Render cached data instantly
+        render();
+      }
     }
-  }
-}catch(e){}
-
-loadData();
+  }catch(e){}
+  loadData();
+}
+function showLoginScreen(){
+  var app=document.getElementById('app');
+  app.innerHTML='<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px">'
+    +'<div style="width:100%;max-width:380px;background:var(--bg);border:1px solid var(--bd);border-radius:16px;padding:32px 28px;box-shadow:var(--shadow-lg)">'
+    +'<div style="display:flex;align-items:center;gap:12px;margin-bottom:6px"><div class="nav-logo"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg></div><div><div style="font-size:16px;font-weight:700">図面DXプラットフォーム</div><div style="font-size:11px;color:var(--tx3)">AI図面管理・類似検索</div></div></div>'
+    +'<div style="font-size:12px;color:var(--tx2);margin:14px 0 20px;padding:10px 12px;background:var(--bg2);border-radius:8px">🔒 このシステムは関係者専用です。ログインしてください。</div>'
+    +'<div class="f-field" style="margin-bottom:12px"><label>メールアドレス</label><input id="loginEmail" type="email" autocomplete="username" placeholder="mail@example.com" onkeydown="if(event.key===\'Enter\')document.getElementById(\'loginPass\').focus()"></div>'
+    +'<div class="f-field" style="margin-bottom:6px"><label>パスワード</label><input id="loginPass" type="password" autocomplete="current-password" placeholder="パスワード" onkeydown="if(event.key===\'Enter\')doLogin()"></div>'
+    +'<div id="loginErr" style="min-height:20px;font-size:11px;color:var(--rd);margin-bottom:8px"></div>'
+    +'<button id="loginBtn" onclick="doLogin()" style="width:100%;padding:12px;border-radius:10px;border:none;background:var(--ac);color:#fff;font-size:14px;font-weight:700;cursor:pointer">ログイン</button>'
+    +'<div style="font-size:10px;color:var(--tx3);margin-top:14px;text-align:center">アカウントは管理者が発行します。<br>ログインできない場合は管理者にお問い合わせください。</div>'
+    +'</div></div>';
+  var em=document.getElementById('loginEmail');if(em)em.focus();
+}
+function doLogin(){
+  var em=(document.getElementById('loginEmail')||{}).value||'';
+  var pw=(document.getElementById('loginPass')||{}).value||'';
+  var err=document.getElementById('loginErr');
+  var btn=document.getElementById('loginBtn');
+  if(!em.trim()||!pw){if(err)err.textContent='メールアドレスとパスワードを入力してください';return;}
+  if(btn){btn.disabled=true;btn.textContent='ログイン中...';btn.style.opacity='.6';}
+  firebase.auth().signInWithEmailAndPassword(em.trim(),pw).catch(function(e){
+    if(btn){btn.disabled=false;btn.textContent='ログイン';btn.style.opacity='1';}
+    var m={'auth/invalid-email':'メールアドレスの形式が正しくありません','auth/user-not-found':'メールアドレスまたはパスワードが違います','auth/wrong-password':'メールアドレスまたはパスワードが違います','auth/invalid-credential':'メールアドレスまたはパスワードが違います','auth/invalid-login-credentials':'メールアドレスまたはパスワードが違います','auth/too-many-requests':'試行回数が多すぎます。しばらく待ってから再度お試しください','auth/network-request-failed':'ネットワークに接続できません。通信環境を確認してください','auth/user-disabled':'このアカウントは無効化されています','auth/configuration-not-found':'認証の初期設定が未完了です。管理者に連絡してください','auth/operation-not-allowed':'メール/パスワード認証が無効です。管理者に連絡してください'};
+    if(err)err.textContent=m[e.code]||('ログインに失敗しました: '+e.message);
+  });
+  // 成功時は onAuthStateChanged が発火して bootApp() が走る
+}
+function doLogout(){
+  if(!confirm('ログアウトしますか？'))return;
+  try{localStorage.removeItem('dxp_fbCache');}catch(e){}
+  try{firebase.auth().signOut().then(function(){location.reload();}).catch(function(){location.reload();});}
+  catch(e){location.reload();}
+}
+if(fbEnabled&&firebase.auth){
+  firebase.auth().onAuthStateChanged(function(u){
+    if(u){
+      AUTH_USER=u;
+      bootApp();
+    }else{
+      AUTH_USER=null;
+      if(window._bootStarted){location.reload();return;}
+      showLoginScreen();
+    }
+  });
+}else if(fbEnabled){
+  // Auth SDK が読み込めなかった場合は安全側に倒してログイン画面相当の案内を表示
+  document.getElementById('app').innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--tx2);font-size:13px;text-align:center;padding:20px">認証モジュールの読み込みに失敗しました。<br>通信環境を確認してページを再読み込みしてください。</div>';
+}else{
+  // Firebase 自体が無効（オフライン起動など）はローカルデータのみで起動
+  bootApp();
 }
 // Start Firebase realtime sync AFTER IndexedDB has loaded (window._dbLoaded flag)
 function startFbAfterLoad(){
@@ -1183,6 +1239,7 @@ var S={tab:'board',search:'',wbSearch:'',wbSearchInput:'',clientFilter:'',fcat:'
 try{var _bc=localStorage.getItem('dxp_boardCollapsed');if(_bc)S.boardCollapsed=JSON.parse(_bc);}catch(e){}
 
 function render(){
+  if(!window._bootStarted)return; // ログイン前は描画しない（ログイン画面を保護）
   var app=document.getElementById('app'),sts=["検討中","見積済","製造中","完了","納品済"],stC={"検討中":"#185FA5","見積済":"#B06E15","製造中":"var(--ac)","完了":"#0E7490","納品済":"#1B8C65"},stB={"検討中":"#E6F1FB","見積済":"#FDF3E0","製造中":"#EEEDFE","完了":"#E0F7FA","納品済":"#E8F5EE"},cats=["すべて"].concat(Array.from(new Set(DRAWINGS.map(function(d){return d.cat}))));
   var fl=DRAWINGS.filter(function(d){if(S.fcat!=='すべて'&&d.cat!==S.fcat)return false;if(S.clientFilter){var cf=S.clientFilter.toLowerCase();if((d.client||'').toLowerCase().indexOf(cf)<0)return false}if(S.search){var q=S.search.toLowerCase();return d.name.toLowerCase().indexOf(q)>=0||d.number.toLowerCase().indexOf(q)>=0||d.mat.toLowerCase().indexOf(q)>=0||d.client.toLowerCase().indexOf(q)>=0||d.size.toLowerCase().indexOf(q)>=0||(d.tags||[]).join(' ').toLowerCase().indexOf(q)>=0}return true});
   var h='<div class="nav"><div class="nav-logo"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg></div><div><div class="nav-title">図面DXプラットフォーム</div><div class="nav-sub">AI図面管理・類似検索</div></div><div class="nav-tabs">';
@@ -1193,6 +1250,7 @@ function render(){
   _tabs.forEach(function(t){h+='<button class="nav-tab'+(S.tab===t.k?' active':'')+'" onclick="setTab(\''+t.k+'\')">'+t.l+'</button>'});
   var _ssc=(function(){var cm={connecting:'#0066CC',pushing:'#0066CC',synced:'#1B8C65',error:'#D70015',offline:'#86868b'};var tm={connecting:'⟳ 接続中...',pushing:'⟳ 同期中...',synced:'✓ 同期済',error:'⚠ 同期エラー',offline:'○ オフライン'};return{c:cm[fbSyncState]||'#86868b',t:tm[fbSyncState]||'○ オフライン'};})();
   h+='<div id="fbSyncStatus" style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;background:var(--bg2);color:'+_ssc.c+';white-space:nowrap;cursor:pointer" title="タップして再取得" onclick="mobileForcePull()">'+_ssc.t+'</div>';
+  if(typeof AUTH_USER!=='undefined'&&AUTH_USER)h+='<button style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;border:1px solid var(--bd);background:var(--bg2);color:var(--tx3);white-space:nowrap;cursor:pointer" title="'+esc(AUTH_USER.email||'')+' でログイン中" onclick="doLogout()">ログアウト</button>';
   if(fbEnabled&&!_mobile)h+='<button style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;border:none;background:#1B8C65;color:#fff;white-space:nowrap;cursor:pointer" onclick="forcePushToFirebase()" title="PCのデータをFirebaseに強制送信">📤 全データ送信</button>';
   if(!_mobile){
     h+='<button class="nav-tab" style="background:var(--ac);color:#fff;font-weight:600" onclick="openRegister()">+ 図面登録</button>';
