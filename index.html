@@ -1470,7 +1470,7 @@ function render(){
     if(isPdfMulti){
       h+='<div id="pdfPagesStrip" style="display:flex;gap:8px;overflow-x:auto;padding:8px 0;margin-bottom:8px"></div>';
     }
-    h+='<div style="display:flex;gap:8px"><button class="g-btn" style="padding:8px 20px;font-size:12px" onclick="saveAnnoImage()">画像として保存</button><button class="g-btn" style="padding:8px 20px;font-size:12px" onclick="printAnno()">印刷</button></div>'}}
+    h+='<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="g-btn" style="padding:8px 20px;font-size:12px" onclick="saveAnnoImage()">画像として保存</button><button class="g-btn" style="padding:8px 20px;font-size:12px" onclick="printAnno()">印刷</button><button class="g-btn" style="padding:8px 20px;font-size:12px" onclick="emailAnnoImage()">✉ メール送信</button></div>'}}
 
   // MASTER MANAGEMENT
   if(S.tab==='master'){
@@ -3683,14 +3683,14 @@ function computeYayoiMatch(){
     var na=ymNormName(name),bgA=ymBigrams(na);
     var row={dx:name,use:dx[name]};
     if(cmap[name]){row.status='mapped';row.mapped=cmap[name];rows.push(row);return;}
-    if(nmap[na]){var y=nmap[na];row.status='exact';row.score=1;row.ycode=y.code;row.yname=y.name;row.alts=[];rows.push(row);return;}
+    if(nmap[na]){var y=nmap[na];row.status='exact';row.score=1;row.ycode=y.code;row.yname=y.name;row.ymail=y.mail||'';row.alts=[];rows.push(row);return;}
     var scored=[];
     ys.forEach(function(y){scored.push([ymSim(na,bgA,y._n,y._bg),y])});
     scored.sort(function(a,b){return b[0]-a[0]});
     var best=scored[0];
     row.score=best?Math.round(best[0]*100)/100:0;
     row.status=row.score>=0.8?'near':(row.score>=0.55?'cand':'none');
-    if(row.status!=='none'&&best){row.ycode=best[1].code;row.yname=best[1].name;
+    if(row.status!=='none'&&best){row.ycode=best[1].code;row.yname=best[1].name;row.ymail=best[1].mail||'';
       row.alts=scored.slice(1,5).filter(function(s){return s[0]>=0.5}).map(function(s){return{code:s[1].code,name:s[1].name,score:Math.round(s[0]*100)/100}});}
     else{row.ycode='';row.yname='';row.alts=[];}
     rows.push(row);
@@ -3708,20 +3708,20 @@ function handleYayoiExcel(ev){
       var ws=wb.worksheets[0];if(!ws){alert('シートが見つかりません');return;}
       function ct(v){if(v==null)return '';if(typeof v==='object'){if(v.text!=null)return String(v.text);if(v.result!=null)return String(v.result);if(v.richText)return v.richText.map(function(t){return t.text}).join('');if(v.hyperlink)return String(v.hyperlink);return '';}return String(v);}
       var rows=[];ws.eachRow({includeEmpty:false},function(row){rows.push(row.values)});
-      var hi=-1,cCode=-1,cName=-1,cFuri=-1,cAddr=-1;
+      var hi=-1,cCode=-1,cName=-1,cFuri=-1,cAddr=-1,cMail=-1;
       for(var i=0;i<Math.min(rows.length,20);i++){
         var texts=(rows[i]||[]).map(ct);
         var hasName=texts.some(function(t){return t.replace(/[\s　]/g,'')==='名称'});
         var hasCode=texts.some(function(t){return t.replace(/[\s　]/g,'').indexOf('コード')>=0});
         if(hasName&&hasCode){hi=i;
-          texts.forEach(function(t,j){var s=t.replace(/[\s　]/g,'');if(cCode<0&&s.indexOf('コード')>=0)cCode=j;if(cName<0&&s==='名称')cName=j;if(cFuri<0&&s.indexOf('フリガナ')>=0)cFuri=j;if(cAddr<0&&s.indexOf('住所')>=0)cAddr=j;});
+          texts.forEach(function(t,j){var s=t.replace(/[\s　]/g,'');if(cCode<0&&s.indexOf('コード')>=0)cCode=j;if(cName<0&&s==='名称')cName=j;if(cFuri<0&&s.indexOf('フリガナ')>=0)cFuri=j;if(cAddr<0&&s.indexOf('住所')>=0)cAddr=j;if(cMail<0&&s.indexOf('メールアドレス')>=0)cMail=j;});
           break;}
       }
       if(hi<0||cName<0){alert('「コード」「名称」の見出しが見つかりませんでした。\n弥生の得意先リストを「得意先リスト形式」でExcel書き出ししてください。');return;}
       var list=[];
       for(var r=hi+1;r<rows.length;r++){
         var vals=rows[r]||[];var name=ct(vals[cName]);if(!name.trim())continue;
-        list.push({code:ct(vals[cCode]).trim(),name:name.trim(),furi:cFuri>=0?ct(vals[cFuri]).trim():'',addr:cAddr>=0?ct(vals[cAddr]).trim():''});
+        list.push({code:ct(vals[cCode]).trim(),name:name.trim(),furi:cFuri>=0?ct(vals[cFuri]).trim():'',addr:cAddr>=0?ct(vals[cAddr]).trim():'',mail:cMail>=0?ct(vals[cMail]).trim():''});
       }
       S.yayoiClients=list;S.yayoiMatch=computeYayoiMatch();render();
       alert('弥生 得意先 '+list.length+'件を読み込み、照合しました。');
@@ -3734,7 +3734,7 @@ function confirmYayoiMapIdx(i){
   var sel=document.getElementById('ym_'+i);var code=sel?sel.value:r.ycode;if(!code)return;
   var y=(S.yayoiClients||[]).find(function(x){return String(x.code)===String(code)});
   MASTERS.clientMap=MASTERS.clientMap||{};
-  MASTERS.clientMap[r.dx]={code:String(code),yname:y?y.name:(r.yname||'')};
+  MASTERS.clientMap[r.dx]={code:String(code),yname:y?y.name:(r.yname||''),mail:y&&y.mail?y.mail:''};
   saveAll(true);S.yayoiMatch=computeYayoiMatch();render();
 }
 function confirmYayoiMapCodeIdx(i){
@@ -3743,7 +3743,7 @@ function confirmYayoiMapCodeIdx(i){
   var y=(S.yayoiClients||[]).find(function(x){return String(x.code)===String(code)});
   if(!y){alert('弥生コード「'+code+'」が見つかりません');return;}
   MASTERS.clientMap=MASTERS.clientMap||{};
-  MASTERS.clientMap[r.dx]={code:String(code),yname:y.name};
+  MASTERS.clientMap[r.dx]={code:String(code),yname:y.name,mail:y.mail||''};
   saveAll(true);S.yayoiMatch=computeYayoiMatch();render();
 }
 function unmapYayoiIdx(i){
@@ -3753,7 +3753,7 @@ function unmapYayoiIdx(i){
 }
 function bulkConfirmExact(){
   MASTERS.clientMap=MASTERS.clientMap||{};
-  var n=0;(S.yayoiMatch||[]).forEach(function(r){if(r.status==='exact'){MASTERS.clientMap[r.dx]={code:r.ycode,yname:r.yname};n++;}});
+  var n=0;(S.yayoiMatch||[]).forEach(function(r){if(r.status==='exact'){MASTERS.clientMap[r.dx]={code:r.ycode,yname:r.yname,mail:r.ymail||''};n++;}});
   if(!n){return;}
   saveAll(true);S.yayoiMatch=computeYayoiMatch();render();
 }
@@ -3978,6 +3978,24 @@ function saveAnnoImage(){
     return;
   }
   output(null);
+}
+
+function emailAnnoImage(){
+  var d=S.annoDrawing;if(!d)return;
+  // ブラウザからは自動添付できないため、画像を保存 → mailtoで宛先/件名/本文を用意 → 手動添付
+  saveAnnoImage();
+  var map=(MASTERS.clientMap||{})[d.client]||{};
+  var to=map.mail||'';
+  var subject='【図面送付】'+d.number+' '+d.name;
+  var lines=['お世話になっております。','','図番 '+d.number+'（'+d.name+'）の図面をお送りいたします。'];
+  if(d.price)lines.push('単価: ¥'+Number(d.price).toLocaleString());
+  lines.push('','※保存された画像「annotated_'+d.number+'.png」を添付してください。','','有限会社 東京ホーニングサービス');
+  var mailto='mailto:'+to+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(lines.join('\n'));
+  var a=document.createElement('a');a.href=mailto;document.body.appendChild(a);a.click();document.body.removeChild(a);
+  setTimeout(function(){
+    alert('メール作成画面を開きました。\n保存した画像「annotated_'+d.number+'.png」を添付して送信してください。'
+      +(to?'\n\n宛先: '+to:'\n\n※取引先「'+(d.client||'')+'」の弥生メアドが未登録です。masterタブ「弥生 得意先突合」で紐づけると宛先が自動で入ります。'));
+  },400);
 }
 
 function drawStampsOnCtx(ctx,scX,scY,callback){
