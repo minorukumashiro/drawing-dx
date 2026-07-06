@@ -3767,40 +3767,39 @@ function saveAnnoWithImage(d,imgUrl){
 
 function saveAnnoImage(){
   var d=S.annoDrawing;if(!d)return;
-  var imgUrl=scannedBlobUrls[d.id]||scannedImages[d.id];
-  if(scannedPdfs[d.id]&&scannedImages[d.id]){
-    // PDF: save all pages
-    renderAllPdfPages(scannedImages[d.id],function(pages){
-      if(pages.length===1){
-        saveAnnoWithImage(d,pages[0]);
-      }else{
-        // Download each page
-        var saved=0;
-        pages.forEach(function(pageUrl,idx){
-          setTimeout(function(){
-            var img=new Image();
-            img.onload=function(){
-              var iw=img.naturalWidth,ih=img.naturalHeight;
-              var comp=document.createElement('canvas');comp.width=iw;comp.height=ih;
-              var ctx=comp.getContext('2d');
-              ctx.drawImage(img,0,0,iw,ih);
-              downloadDataURL(comp.toDataURL('image/png'),d.number+'_p'+(idx+1)+'.png');
-              saved++;
-              if(saved===pages.length)alert(d.number+': '+pages.length+'ページの画像を保存しました');
-            };
-            img.src=pageUrl;
-          },idx*500); // Stagger downloads
-        });
-      }
+  // 表示中の図面（#pdfBg または <img>）に注記レイヤー(#cv)を重ねて1枚に合成する。
+  // 保存経路で再レンダリングすると白紙になる不具合があったため、
+  // 「画面に見えているものをそのまま保存する」方式に統一する。
+  var cv=document.getElementById('cv');
+  function onScreenBg(){
+    var pdfBg=document.getElementById('pdfBg');
+    if(pdfBg&&pdfBg.width>0)return pdfBg; // PDF: 表示済みの現在ページ
+    var bgImg=document.querySelector('#annoWrap img[data-scanimg]');
+    if(bgImg&&bgImg.complete&&bgImg.naturalWidth>0)return bgImg; // 画像図面
+    return null;
+  }
+  function output(bg){
+    var W=(cv&&cv.width)||(bg&&(bg.width||bg.naturalWidth))||1400;
+    var H=(cv&&cv.height)||(bg&&(bg.height||bg.naturalHeight))||990;
+    var comp=document.createElement('canvas');comp.width=W;comp.height=H;
+    var ctx=comp.getContext('2d');
+    ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H); // 透過を避けて白地に
+    if(bg)ctx.drawImage(bg,0,0,W,H);            // 図面（アスペクト比は#cvと一致）
+    if(cv)ctx.drawImage(cv,0,0,W,H);            // 注記・スタンプ・単価など
+    downloadDataURL(comp.toDataURL('image/png'),'annotated_'+d.number+'.png');
+  }
+  var bg=onScreenBg();
+  if(bg){output(bg);return;}
+  // 画面に図面が未表示の場合の保険: PDFなら高解像度で1ページ目を描画して合成
+  var pdfSrc=getPdfSrc(d.id);
+  if(pdfSrc){
+    renderPdfPageForExport(pdfSrc,3).then(function(res){
+      if(res&&res.src){var im=new Image();im.onload=function(){output(im)};im.onerror=function(){output(null)};im.src=res.src;}
+      else output(null);
     });
     return;
   }
-  if(imgUrl){
-    saveAnnoWithImage(d,imgUrl);
-  }else{
-    var cv=document.getElementById('cv');
-    if(cv)downloadDataURL(cv.toDataURL('image/png'),'annotated_'+d.number+'.png');
-  }
+  output(null);
 }
 
 function drawStampsOnCtx(ctx,scX,scY,callback){
