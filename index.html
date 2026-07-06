@@ -1108,7 +1108,8 @@ var DEF_MASTERS={
   shapes:[{v:"circle",l:"丸型"},{v:"shaft",l:"シャフト"},{v:"bracket",l:"ブラケット"},{v:"plate",l:"プレート"},{v:"spacer",l:"スペーサー"}],
   clients:["東洋機械工業","三和精機","大阪金属工業","山陽アルミ","新日本工機","関東バルブ","松本精密"],
   statuses:["検討中","見積済","製造中","完了","納品済","その他"],
-  surfaces:["メッキ","アルマイト","黒染め","ニッケル","クロム","亜鉛メッキ","無電解ニッケル","塗装"]
+  surfaces:["メッキ","アルマイト","黒染め","ニッケル","クロム","亜鉛メッキ","無電解ニッケル","塗装"],
+  clientMap:{} // 図面DX取引先名 -> {code, yname}（弥生得意先台帳との突合結果）
 };
 var MASTERS={};
 // Show loading indicator immediately
@@ -1500,6 +1501,7 @@ function render(){
       h+='</div>';
     }
     h+='</div>';
+    h+=yayoiMatchCardHTML();
     h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px">';
     var masterSections=[
       {key:'materials',label:'材質',ph:'例: SUS420'},
@@ -3641,6 +3643,182 @@ function delMaster(key,idx){
   var label=typeof item==='object'?item.l:item;
   if(!confirm('「'+label+'」を削除しますか？'))return;
   MASTERS[key].splice(idx,1);saveAll(true);render();
+}
+
+// ===== 弥生 得意先突合 =====
+function ymNormName(s){
+  s=String(s||'');
+  try{s=s.normalize('NFKC')}catch(e){}
+  s=s.replace(/[\s　]/g,'');
+  ['株式会社','有限会社','（株）','(株)','（有）','(有)','㈱','㈲','合同会社','合資会社'].forEach(function(t){s=s.split(t).join('')});
+  s=s.replace(/[()（）・,、.。\-ー－_/／]/g,'');
+  return s.toLowerCase();
+}
+function ymBigrams(s){var a=[];for(var i=0;i<s.length-1;i++)a.push(s.substr(i,2));return a;}
+function ymSim(a,bgA,b,bgB){
+  if(!a||!b)return 0;
+  if(a===b)return 1;
+  if(a.length<2||b.length<2)return a===b?1:0;
+  var map={},inter=0;
+  bgA.forEach(function(g){map[g]=(map[g]||0)+1});
+  bgB.forEach(function(g){if(map[g]>0){inter++;map[g]--}});
+  var d=2*inter/(bgA.length+bgB.length);
+  if(a.indexOf(b)>=0||b.indexOf(a)>=0)d=Math.max(d,0.9+0.1*Math.min(a.length,b.length)/Math.max(a.length,b.length));
+  return d;
+}
+function ymDxClients(){
+  var m={};
+  (MASTERS.clients||[]).forEach(function(c){if(c)m[c]=m[c]||0});
+  DRAWINGS.forEach(function(d){if(d&&d.client)m[d.client]=(m[d.client]||0)+1});
+  return m;
+}
+function computeYayoiMatch(){
+  var ys=S.yayoiClients||[];
+  ys.forEach(function(y){if(y._n==null){y._n=ymNormName(y.name);y._bg=ymBigrams(y._n);}});
+  var nmap={};ys.forEach(function(y){if(nmap[y._n]==null)nmap[y._n]=y});
+  var cmap=MASTERS.clientMap||{};
+  var dx=ymDxClients();
+  var rows=[];
+  Object.keys(dx).forEach(function(name){
+    var na=ymNormName(name),bgA=ymBigrams(na);
+    var row={dx:name,use:dx[name]};
+    if(cmap[name]){row.status='mapped';row.mapped=cmap[name];rows.push(row);return;}
+    if(nmap[na]){var y=nmap[na];row.status='exact';row.score=1;row.ycode=y.code;row.yname=y.name;row.alts=[];rows.push(row);return;}
+    var scored=[];
+    ys.forEach(function(y){scored.push([ymSim(na,bgA,y._n,y._bg),y])});
+    scored.sort(function(a,b){return b[0]-a[0]});
+    var best=scored[0];
+    row.score=best?Math.round(best[0]*100)/100:0;
+    row.status=row.score>=0.8?'near':(row.score>=0.55?'cand':'none');
+    if(row.status!=='none'&&best){row.ycode=best[1].code;row.yname=best[1].name;
+      row.alts=scored.slice(1,5).filter(function(s){return s[0]>=0.5}).map(function(s){return{code:s[1].code,name:s[1].name,score:Math.round(s[0]*100)/100}});}
+    else{row.ycode='';row.yname='';row.alts=[];}
+    rows.push(row);
+  });
+  rows.forEach(function(r,i){r._i=i});
+  return rows;
+}
+function handleYayoiExcel(ev){
+  var f=ev.target.files[0];if(!f)return;
+  if(typeof ExcelJS==='undefined'){alert('Excel読込ライブラリが未読込です。ページを再読み込みしてください。');return;}
+  var reader=new FileReader();
+  reader.onload=function(e){
+    var wb=new ExcelJS.Workbook();
+    wb.xlsx.load(e.target.result).then(function(){
+      var ws=wb.worksheets[0];if(!ws){alert('シートが見つかりません');return;}
+      function ct(v){if(v==null)return '';if(typeof v==='object'){if(v.text!=null)return String(v.text);if(v.result!=null)return String(v.result);if(v.richText)return v.richText.map(function(t){return t.text}).join('');if(v.hyperlink)return String(v.hyperlink);return '';}return String(v);}
+      var rows=[];ws.eachRow({includeEmpty:false},function(row){rows.push(row.values)});
+      var hi=-1,cCode=-1,cName=-1,cFuri=-1,cAddr=-1;
+      for(var i=0;i<Math.min(rows.length,20);i++){
+        var texts=(rows[i]||[]).map(ct);
+        var hasName=texts.some(function(t){return t.replace(/[\s　]/g,'')==='名称'});
+        var hasCode=texts.some(function(t){return t.replace(/[\s　]/g,'').indexOf('コード')>=0});
+        if(hasName&&hasCode){hi=i;
+          texts.forEach(function(t,j){var s=t.replace(/[\s　]/g,'');if(cCode<0&&s.indexOf('コード')>=0)cCode=j;if(cName<0&&s==='名称')cName=j;if(cFuri<0&&s.indexOf('フリガナ')>=0)cFuri=j;if(cAddr<0&&s.indexOf('住所')>=0)cAddr=j;});
+          break;}
+      }
+      if(hi<0||cName<0){alert('「コード」「名称」の見出しが見つかりませんでした。\n弥生の得意先リストを「得意先リスト形式」でExcel書き出ししてください。');return;}
+      var list=[];
+      for(var r=hi+1;r<rows.length;r++){
+        var vals=rows[r]||[];var name=ct(vals[cName]);if(!name.trim())continue;
+        list.push({code:ct(vals[cCode]).trim(),name:name.trim(),furi:cFuri>=0?ct(vals[cFuri]).trim():'',addr:cAddr>=0?ct(vals[cAddr]).trim():''});
+      }
+      S.yayoiClients=list;S.yayoiMatch=computeYayoiMatch();render();
+      alert('弥生 得意先 '+list.length+'件を読み込み、照合しました。');
+    }).catch(function(err){alert('Excel読込エラー: '+err.message);});
+  };
+  reader.readAsArrayBuffer(f);
+}
+function confirmYayoiMapIdx(i){
+  var r=(S.yayoiMatch||[])[i];if(!r)return;
+  var sel=document.getElementById('ym_'+i);var code=sel?sel.value:r.ycode;if(!code)return;
+  var y=(S.yayoiClients||[]).find(function(x){return String(x.code)===String(code)});
+  MASTERS.clientMap=MASTERS.clientMap||{};
+  MASTERS.clientMap[r.dx]={code:String(code),yname:y?y.name:(r.yname||'')};
+  saveAll(true);S.yayoiMatch=computeYayoiMatch();render();
+}
+function confirmYayoiMapCodeIdx(i){
+  var r=(S.yayoiMatch||[])[i];if(!r)return;
+  var inp=document.getElementById('yc_'+i);var code=inp?inp.value.trim():'';if(!code)return;
+  var y=(S.yayoiClients||[]).find(function(x){return String(x.code)===String(code)});
+  if(!y){alert('弥生コード「'+code+'」が見つかりません');return;}
+  MASTERS.clientMap=MASTERS.clientMap||{};
+  MASTERS.clientMap[r.dx]={code:String(code),yname:y.name};
+  saveAll(true);S.yayoiMatch=computeYayoiMatch();render();
+}
+function unmapYayoiIdx(i){
+  var r=(S.yayoiMatch||[])[i];if(!r)return;
+  if(MASTERS.clientMap)delete MASTERS.clientMap[r.dx];
+  saveAll(true);S.yayoiMatch=computeYayoiMatch();render();
+}
+function bulkConfirmExact(){
+  MASTERS.clientMap=MASTERS.clientMap||{};
+  var n=0;(S.yayoiMatch||[]).forEach(function(r){if(r.status==='exact'){MASTERS.clientMap[r.dx]={code:r.ycode,yname:r.yname};n++;}});
+  if(!n){return;}
+  saveAll(true);S.yayoiMatch=computeYayoiMatch();render();
+}
+function ymBadge(r){
+  if(r.status==='near')return '<span style="font-size:10px;padding:2px 7px;border-radius:10px;background:#FFF7E6;color:#B06E15">ほぼ '+Math.round(r.score*100)+'%</span>';
+  if(r.status==='cand')return '<span style="font-size:10px;padding:2px 7px;border-radius:10px;background:#FFF7E6;color:#B06E15">候補 '+Math.round(r.score*100)+'%</span>';
+  if(r.status==='none')return '<span style="font-size:10px;padding:2px 7px;border-radius:10px;background:#FDECEC;color:#C03030">該当なし</span>';
+  return '';
+}
+function ymRowHTML(r){
+  var h='<div style="display:flex;align-items:center;gap:8px;padding:8px 4px;border-bottom:1px solid var(--bd)">';
+  h+='<div style="flex:0 0 130px;min-width:0"><div style="font-size:12px;font-weight:600;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(r.dx)+'">'+esc(r.dx)+'</div><div style="font-size:10px;color:var(--tx3)">図面'+r.use+'件</div></div>';
+  h+='<div style="flex:0 0 66px;text-align:center">'+ymBadge(r)+'</div>';
+  if(r.status==='none'){
+    h+='<div style="flex:1;min-width:0;font-size:11px;color:var(--tx3)">弥生に候補なし（表記/図面データ要確認）</div>';
+    h+='<input id="yc_'+r._i+'" placeholder="弥生コード" style="flex:0 0 90px;padding:4px 6px;border:1px solid var(--bd);border-radius:5px;font-size:11px">';
+    h+='<button class="g-btn" style="padding:5px 10px;font-size:11px" onclick="confirmYayoiMapCodeIdx('+r._i+')">紐づけ</button>';
+  }else{
+    h+='<div style="flex:1;min-width:0"><select id="ym_'+r._i+'" style="width:100%;padding:4px 6px;border:1px solid var(--bd);border-radius:5px;font-size:11px">';
+    h+='<option value="'+esc(r.ycode)+'">'+esc(r.ycode+' '+r.yname)+' ('+Math.round(r.score*100)+'%)</option>';
+    (r.alts||[]).forEach(function(a){h+='<option value="'+esc(a.code)+'">'+esc(a.code+' '+a.name)+' ('+Math.round(a.score*100)+'%)</option>'});
+    h+='</select></div>';
+    h+='<button class="g-btn" style="padding:5px 12px;font-size:11px" onclick="confirmYayoiMapIdx('+r._i+')">確定</button>';
+  }
+  h+='</div>';return h;
+}
+function ymMappedRowHTML(r){
+  var m=r.mapped||{};
+  return '<div style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--bd)">'
+    +'<div style="flex:0 0 130px;font-size:12px;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(r.dx)+'">'+esc(r.dx)+'</div>'
+    +'<div style="flex:1;min-width:0;font-size:11px;color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span style="color:#1B8C65">✓</span> '+esc((m.code||'')+' '+(m.yname||''))+'</div>'
+    +'<button style="padding:4px 10px;font-size:11px;border-radius:5px;border:1px solid var(--bd);background:var(--bg);color:var(--rd);cursor:pointer" onclick="unmapYayoiIdx('+r._i+')">解除</button>'
+    +'</div>';
+}
+function yayoiMatchCardHTML(){
+  MASTERS.clientMap=MASTERS.clientMap||{};
+  var h='<div style="background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:16px;margin-bottom:16px">';
+  h+='<div style="font-weight:600;font-size:13px;margin-bottom:8px;color:var(--tx)">🔗 弥生 得意先突合 <span style="font-weight:400;font-size:11px;color:var(--tx3);margin-left:6px">紐づけ済 '+Object.keys(MASTERS.clientMap).length+'社</span></div>';
+  h+='<div style="font-size:11px;color:var(--tx3);margin-bottom:10px">弥生販売の得意先リストを「得意先リスト形式」でExcel書き出しして読み込むと、図面DXの取引先に弥生コードを自動照合します。</div>';
+  h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">';
+  h+='<button class="g-btn" style="padding:8px 16px;font-size:12px" onclick="document.getElementById(\'yayoiFile\').click()">📥 弥生Excelを読み込む</button>';
+  h+='<input type="file" id="yayoiFile" accept=".xlsx" style="display:none" onchange="handleYayoiExcel(event)">';
+  if(S.yayoiClients&&S.yayoiClients.length)h+='<button class="g-btn" style="padding:8px 16px;font-size:12px" onclick="S.yayoiClients=null;S.yayoiMatch=null;render()">照合結果をクリア</button>';
+  h+='</div>';
+  if(!(S.yayoiClients&&S.yayoiClients.length)){h+='</div>';return h;}
+  var rows=S.yayoiMatch||[];
+  var by={exact:[],near:[],cand:[],none:[],mapped:[]};
+  rows.forEach(function(r){(by[r.status]||by.none).push(r)});
+  Object.keys(by).forEach(function(k){by[k].sort(function(a,b){return b.use-a.use})});
+  h+='<div style="font-size:11px;color:var(--tx2);margin-bottom:10px">弥生 '+S.yayoiClients.length+'件と照合： 完全一致 '+by.exact.length+' / ほぼ一致 '+by.near.length+' / 候補 '+by.cand.length+' / 該当なし '+by.none.length+' / 紐づけ済 '+by.mapped.length+'</div>';
+  if(by.exact.length)h+='<button class="g-btn" style="padding:7px 14px;font-size:12px;margin-bottom:10px" onclick="bulkConfirmExact()">✓ 完全一致 '+by.exact.length+'件を一括紐づけ</button>';
+  var need=by.near.concat(by.cand);
+  if(need.length){
+    h+='<div style="font-size:11px;font-weight:600;color:#B06E15;margin:8px 0 4px">要確認（'+need.length+'）</div>';
+    h+='<div style="max-height:300px;overflow:auto;border:1px solid var(--bd);border-radius:8px;padding:0 8px">'+need.map(ymRowHTML).join('')+'</div>';
+  }
+  if(by.none.length){
+    h+='<div style="font-size:11px;font-weight:600;color:#C03030;margin:12px 0 4px">該当なし（'+by.none.length+'）</div>';
+    h+='<div style="max-height:220px;overflow:auto;border:1px solid var(--bd);border-radius:8px;padding:0 8px">'+by.none.map(ymRowHTML).join('')+'</div>';
+  }
+  if(by.mapped.length){
+    h+='<div style="font-size:11px;font-weight:600;color:#1B8C65;margin:12px 0 4px">紐づけ済（'+by.mapped.length+'）</div>';
+    h+='<div style="max-height:240px;overflow:auto;border:1px solid var(--bd);border-radius:8px;padding:0 8px">'+by.mapped.map(ymMappedRowHTML).join('')+'</div>';
+  }
+  h+='</div>';return h;
 }
 
 function delByStatus(status){
