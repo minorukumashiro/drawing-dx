@@ -1247,7 +1247,7 @@ function render(){
   var _mobile=isMobileDevice();
   // If mobile and current tab is 'master', switch to 'board'
   if(_mobile&&S.tab==='master')S.tab='board';
-  var _tabs=_mobile?[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'},{k:'delivery',l:'納品カレンダー'}]:[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'},{k:'delivery',l:'納品カレンダー'},{k:'master',l:'マスター管理'}];
+  var _tabs=_mobile?[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'},{k:'delivery',l:'納品カレンダー'},{k:'analytics',l:'生産性分析'}]:[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'},{k:'delivery',l:'納品カレンダー'},{k:'analytics',l:'生産性分析'},{k:'master',l:'マスター管理'}];
   _tabs.forEach(function(t){h+='<button class="nav-tab'+(S.tab===t.k?' active':'')+'" onclick="setTab(\''+t.k+'\')">'+t.l+'</button>'});
   var _ssc=(function(){var cm={connecting:'#0066CC',pushing:'#0066CC',synced:'#1B8C65',error:'#D70015',offline:'#86868b'};var tm={connecting:'⟳ 接続中...',pushing:'⟳ 同期中...',synced:'✓ 同期済',error:'⚠ 同期エラー',offline:'○ オフライン'};return{c:cm[fbSyncState]||'#86868b',t:tm[fbSyncState]||'○ オフライン'};})();
   h+='<div id="fbSyncStatus" style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;background:var(--bg2);color:'+_ssc.c+';white-space:nowrap;cursor:pointer" title="タップして再取得" onclick="mobileForcePull()">'+_ssc.t+'</div>';
@@ -1268,6 +1268,9 @@ function render(){
 
   // BOARD
   if(S.tab==='board'){h+='<div class="section-title">案件ホワイトボード</div><div style="margin-bottom:14px;display:flex;gap:8px"><input id="wbSearchInput" type="search" placeholder="図面名・図面番号・取引先で絞り込み..." value="'+esc(S.wbSearchInput||'')+'" oninput="S.wbSearchInput=this.value" onkeydown="if(event.key===\'Enter\'){S.wbSearch=S.wbSearchInput;render()}" style="flex:1;padding:9px 14px;border-radius:10px;border:1px solid '+(S.wbSearch?'var(--ac)':'var(--bd)')+';background:var(--bg);color:var(--tx);font-size:13px;outline:none;box-sizing:border-box"><button onclick="S.wbSearch=S.wbSearchInput||S.wbSearch;render()" style="padding:9px 18px;border-radius:10px;border:none;background:var(--ac);color:#fff;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">検索</button>'+(S.wbSearch?'<button onclick="S.wbSearch=\'\';S.wbSearchInput=\'\';render()" style="padding:9px 14px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);font-size:13px;cursor:pointer">✕ クリア</button>':'')+'</div><div class="board">';sts.forEach(function(st){var _wbq=(S.wbSearch||'').toLowerCase();var items=DRAWINGS.filter(function(d){if(d.status!==st)return false;if(!_wbq)return true;return d.name.toLowerCase().indexOf(_wbq)>=0||d.number.toLowerCase().indexOf(_wbq)>=0||d.client.toLowerCase().indexOf(_wbq)>=0||(d.tags&&d.tags.join(' ').toLowerCase().indexOf(_wbq)>=0);});var _bcCol=_mobile&&S.boardCollapsed&&S.boardCollapsed[st];var _bcChev=_mobile?'<span style="display:inline-block;width:12px;font-size:9px;color:var(--tx3);transform:rotate('+(_bcCol?'-90deg':'0deg')+')">▼</span>':'';h+='<div class="board-col"><div class="board-col-head"'+(_mobile?' onclick="toggleBoardCol(\''+st+'\')" style="cursor:pointer;user-select:none"':'')+'>'+_bcChev+'<span class="dot" style="background:'+stC[st]+'"></span>'+st+'<span class="cnt">'+items.length+'</span></div><div'+(_bcCol?' style="display:none"':'')+'>';items.forEach(function(d){var hasAnno=ANNOTATIONS[d.id]&&((ANNOTATIONS[d.id].lines&&ANNOTATIONS[d.id].lines.length)||(ANNOTATIONS[d.id].stamps&&ANNOTATIONS[d.id].stamps.length)||(ANNOTATIONS[d.id].texts&&ANNOTATIONS[d.id].texts.length)||(ANNOTATIONS[d.id].qrs&&ANNOTATIONS[d.id].qrs.length));h+='<div class="board-card" onclick="openDetail('+d.id+')"><div class="bc-title">'+d.name+(d.scanned?'<span class="badge badge-scan">スキャン</span>':'')+(hasAnno?'<span class="badge" style="background:#FDF3E0;color:#B06E15;margin-left:4px">✏ 書込</span>':'')+'</div><div class="bc-meta">'+d.number+' · '+d.client+'</div><div class="bc-tags"><span class="bc-tag" style="background:'+stB[st]+';color:'+stC[st]+'">'+st+'</span><span class="bc-tag" style="background:'+(d.priority==='高'?'var(--rd2)':d.priority==='中'?'var(--am2)':'var(--bg3)')+';color:'+(d.priority==='高'?'var(--rd)':d.priority==='中'?'var(--am)':'var(--tx3)')+'">'+d.priority+'</span></div><div style="display:flex;gap:4px;margin-top:6px"><button style="font-size:9px;padding:2px 6px;border-radius:4px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer" onclick="event.stopPropagation();selAnno('+d.id+');S.tab=\'annotate\';render()">書込</button><button style="font-size:9px;padding:2px 6px;border-radius:4px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer" onclick="event.stopPropagation();printDrawingImage('+d.id+')">印刷</button></div></div>'});h+='</div></div>'});h+='</div>'}
+
+  // 生産性分析
+  if(S.tab==='analytics'){h+=analyticsHTML();}
 
   // 納品カレンダー
   if(S.tab==='delivery'){
@@ -1551,6 +1554,7 @@ function render(){
     +'<div class="f-row"><div class="f-field"><label>取引先</label><input id="eCl" list="clList" value="'+esc(ed.client)+'"></div><div class="f-field"><label>単価</label><input id="ePr" type="number" value="'+ed.price+'" onwheel="this.blur()"></div></div>'
     +'<div class="f-row"><div class="f-field"><label>ステータス</label><select id="eSt">'+MASTERS.statuses.map(function(s){return'<option'+(ed.status===s?' selected':'')+'>'+s+'</option>'}).join('')+'</select></div><div class="f-field"><label>優先度</label><select id="ePri">'+["高","中","低"].map(function(p){return'<option'+(ed.priority===p?' selected':'')+'>'+p+'</option>'}).join('')+'</select></div></div>'
     +'<div class="f-row"><div class="f-field"><label>数量</label><input id="eQty" type="number" value="'+esc(String(ed.qty||''))+'" onwheel="this.blur()"></div><div class="f-field"><label>納期</label><input id="eDeadline" type="date" value="'+esc(ed.deadline||'')+'"></div></div>'
+    +'<div class="f-row"><div class="f-field"><label>製造時間（分/個）</label><input id="eMfg" type="number" step="0.1" value="'+esc(String(ed.mfgMin||''))+'" onwheel="this.blur()" placeholder="例: 45"></div><div class="f-field"><label>時間あたり付加価値（自動計算）</label><input value="'+(ed.mfgMin&&ed.price?('¥'+Math.round(ed.price*60/ed.mfgMin).toLocaleString()+' /h'):'—')+'" readonly style="background:var(--bg2);color:var(--tx2)"></div></div>'
     +'<div class="f-field" style="margin-bottom:12px"><label>タグ（カンマ区切り）</label><input id="eTg" value="'+esc((ed.tags||[]).join(', '))+'"></div>'
     +(function(){var relChips=(S.editRelated||[]).map(function(rid){var rd=DRAWINGS.find(function(x){return x.id===rid});return rd?'<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:#E8F0FF;border:1px solid var(--ac);border-radius:12px;font-size:11px;color:var(--ac)">'+esc(rd.number)+' '+esc(rd.name)+'<button onclick="removeRelated('+rid+')" style="background:none;border:none;cursor:pointer;color:var(--rd);font-size:14px;padding:0 2px;line-height:1">&times;</button></span>':'';}).join('');var q=(S.relSearchQ||'').toLowerCase();var relDrop='';if(q){var res=DRAWINGS.filter(function(x){return x.id!==ed.id&&(S.editRelated||[]).indexOf(x.id)<0&&(x.number.toLowerCase().indexOf(q)>=0||x.name.toLowerCase().indexOf(q)>=0);}).slice(0,6);relDrop='<div style="border:1px solid var(--bd);border-radius:6px;overflow:hidden;margin-bottom:6px;background:var(--bg)">'+(res.length?res.map(function(x){return'<div onclick="addRelated('+x.id+')" style="padding:7px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--bd)" onmouseover="this.style.background=\'var(--bg2)\'" onmouseout="this.style.background=\'\'">'+esc(x.number)+' — '+esc(x.name)+'<span style="font-size:10px;color:var(--tx3);margin-left:6px">'+esc(x.client)+'</span></div>';}).join(''):'<div style="font-size:11px;color:var(--tx3);padding:8px 10px">一致する図面がありません</div>')+'</div>';}return'<div class="f-field" style="margin-bottom:12px"><label>関連図面</label><input id="relSrch" placeholder="図面番号または名称で検索して追加..." value="'+esc(S.relSearchQ||'')+'" oninput="S.relSearchQ=this.value;render()" style="margin-bottom:6px">'+relDrop+'<div style="display:flex;flex-wrap:wrap;gap:6px;min-height:8px">'+relChips+'</div></div>';})()
     +'</div><div class="modal-foot"><button class="btn-cancel" onclick="closeEdit()">キャンセル</button><button class="btn-save" onclick="saveEdit()">保存</button></div></div></div>'}
@@ -2072,6 +2076,72 @@ function clearAnno(){
   initCV();
 }
 function setTab(t){S.tab=t;render()}
+function setTargetRate(v){var n=parseFloat(v);S.targetRate=(!isNaN(n)&&n>0)?n:4000;render();}
+function analyticsHTML(){
+  var target=S.targetRate&&S.targetRate>0?S.targetRate:4000;
+  var withT=DRAWINGS.filter(function(d){return d.mfgMin&&d.mfgMin>0&&d.price&&d.price>0;});
+  var h='<div class="section-title">生産性分析 — 時間あたり付加価値（¥/h）</div>';
+  h+='<div style="margin-bottom:14px;font-size:12px;color:var(--tx3);line-height:1.7">単価 ÷ 製造時間で「時間あたりいくら稼げているか」を算出し、低い図面・取引先＝<b style="color:var(--rd)">改善投資のリターンが最大</b>の箇所をあぶり出します。図面編集画面の「製造時間（分/個）」を入力すると集計されます。</div>';
+  h+='<div style="margin-bottom:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><label style="font-size:12px;color:var(--tx2);font-weight:600">目標チャージレート</label><input type="number" value="'+target+'" onwheel="this.blur()" onchange="setTargetRate(this.value)" style="width:110px;padding:7px 10px;border:1px solid var(--bd);border-radius:8px;font-size:13px"><span style="font-size:12px;color:var(--tx3)">円/時 未満を<b style="color:var(--rd)">赤字リスク</b>として表示</span></div>';
+  if(!withT.length){
+    h+='<div style="background:var(--bg2);border:1px dashed var(--bd);border-radius:var(--r);padding:32px 22px;text-align:center;color:var(--tx3);font-size:13px">製造時間が入力された図面がまだありません。<br>図面一覧や案件ボードから図面を開き、<b>編集</b>画面の「製造時間（分/個）」を入力すると、ここに分析が表示されます。</div>';
+    return h;
+  }
+  var rows=withT.map(function(d){var qty=d.qty&&d.qty>0?d.qty:1;return{d:d,rate:d.price*60/d.mfgMin,totalH:d.mfgMin*qty/60,qty:qty};});
+  var rates=rows.map(function(r){return r.rate;});
+  var avgRate=rates.reduce(function(a,b){return a+b;},0)/rates.length;
+  var sorted=rates.slice().sort(function(a,b){return a-b;});
+  var median=sorted.length%2?sorted[(sorted.length-1)/2]:(sorted[sorted.length/2-1]+sorted[sorted.length/2])/2;
+  var totalHours=rows.reduce(function(a,r){return a+r.totalH;},0);
+  var belowN=rows.filter(function(r){return r.rate<target;}).length;
+  var yen=function(n){return '¥'+Math.round(n).toLocaleString();};
+  // KPIカード
+  h+='<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px">';
+  [['対象図面数',withT.length+' 件','var(--tx)'],['平均 ¥/h',yen(avgRate)+' /h','var(--ac)'],['中央値 ¥/h',yen(median)+' /h','var(--tx)'],['目標未満',belowN+' 件','var(--rd)'],['総製造工数',totalHours.toFixed(1)+' h','var(--tx)']].forEach(function(k){h+='<div style="flex:1;min-width:120px;background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:12px 16px;box-shadow:var(--shadow)"><div style="font-size:10px;color:var(--tx3);font-weight:500">'+k[0]+'</div><div style="font-size:20px;font-weight:700;color:'+k[2]+'">'+k[1]+'</div></div>';});
+  h+='</div>';
+  // 散布図
+  h+=scatterSVG(rows,target);
+  // ¥/hランキング（ワースト順）
+  var ranked=rows.slice().sort(function(a,b){return a.rate-b.rate;});
+  h+='<div class="section-title" style="font-size:14px;margin-top:24px">¥/h ワーストランキング（改善優先度順）</div>';
+  h+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:640px">';
+  h+='<thead><tr style="background:var(--bg2);color:var(--tx3);text-align:left"><th style="padding:8px 10px">順位</th><th style="padding:8px 10px">図番</th><th style="padding:8px 10px">品名</th><th style="padding:8px 10px">取引先</th><th style="padding:8px 10px;text-align:right">単価</th><th style="padding:8px 10px;text-align:right">製造時間</th><th style="padding:8px 10px;text-align:right">¥/h</th><th style="padding:8px 10px">判定</th></tr></thead><tbody>';
+  ranked.slice(0,25).forEach(function(r,i){var d=r.d;var bad=r.rate<target;var warn=r.rate<median;var col=bad?'var(--rd)':(warn?'var(--am)':'var(--gn)');var tag=bad?'<span style="padding:2px 8px;border-radius:6px;background:var(--rd2);color:var(--rd);font-size:10px;font-weight:700">赤字リスク</span>':(warn?'<span style="padding:2px 8px;border-radius:6px;background:var(--am2);color:var(--am);font-size:10px;font-weight:700">要改善</span>':'<span style="padding:2px 8px;border-radius:6px;background:#E8F5EE;color:var(--gn);font-size:10px;font-weight:700">良好</span>');h+='<tr style="border-bottom:1px solid var(--bd);cursor:pointer" onclick="editDrawing('+d.id+')"><td style="padding:8px 10px;color:var(--tx3)">'+(i+1)+'</td><td style="padding:8px 10px;font-weight:600">'+esc(d.number)+'</td><td style="padding:8px 10px">'+esc(d.name)+'</td><td style="padding:8px 10px;color:var(--tx2)">'+esc(d.client||'—')+'</td><td style="padding:8px 10px;text-align:right">'+yen(d.price)+'</td><td style="padding:8px 10px;text-align:right;color:var(--tx2)">'+d.mfgMin+' 分</td><td style="padding:8px 10px;text-align:right;font-weight:700;color:'+col+'">'+yen(r.rate)+'</td><td style="padding:8px 10px">'+tag+'</td></tr>';});
+  h+='</tbody></table></div>';
+  // 取引先別チャージレート
+  var byCl={};rows.forEach(function(r){var c=r.d.client||'（未設定）';if(!byCl[c])byCl[c]={sales:0,hours:0,n:0};byCl[c].sales+=r.d.price*r.qty;byCl[c].hours+=r.totalH;byCl[c].n++;});
+  var clArr=Object.keys(byCl).map(function(c){var o=byCl[c];return{client:c,rate:o.hours>0?o.sales/o.hours:0,n:o.n,hours:o.hours};}).filter(function(o){return o.rate>0;}).sort(function(a,b){return a.rate-b.rate;});
+  var maxClRate=clArr.reduce(function(m,o){return Math.max(m,o.rate);},1);
+  h+='<div class="section-title" style="font-size:14px;margin-top:24px">取引先別チャージレート（薄利多動の発見）</div>';
+  h+='<div style="background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:14px 18px;box-shadow:var(--shadow)">';
+  clArr.forEach(function(o){var bad=o.rate<target;var col=bad?'var(--rd)':(o.rate<median?'var(--am)':'var(--gn)');var w=Math.max(3,o.rate/maxClRate*100);h+='<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="font-weight:600">'+esc(o.client)+' <span style="color:var(--tx3);font-weight:400">('+o.n+'件 / '+o.hours.toFixed(1)+'h)</span></span><span style="font-weight:700;color:'+col+'">'+yen(o.rate)+' /h</span></div><div style="height:10px;background:var(--bg2);border-radius:5px;overflow:hidden"><div style="height:100%;width:'+w+'%;background:'+col+';border-radius:5px"></div></div></div>';});
+  h+='</div>';
+  return h;
+}
+function scatterSVG(rows,target){
+  var W=720,H=380,pl=64,pr=20,pt=20,pb=48,pw=W-pl-pr,ph=H-pt-pb;
+  var xMax=rows.reduce(function(m,r){return Math.max(m,r.d.mfgMin);},1)*1.1;
+  var yMax=rows.reduce(function(m,r){return Math.max(m,r.d.price);},1)*1.1;
+  var X=function(v){return pl+v/xMax*pw;};
+  var Y=function(v){return pt+ph-v/yMax*ph;};
+  var s='<div style="background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:14px 10px;box-shadow:var(--shadow);overflow-x:auto"><div style="font-size:13px;font-weight:600;padding:0 8px 8px;color:var(--tx2)">散布図：製造時間 × 単価 <span style="font-size:11px;color:var(--tx3);font-weight:400">（点線より下＝目標¥/h未満。右下ほど「時間がかかる割に安い」＝改善ターゲット）</span></div>';
+  s+='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;min-width:560px;height:auto;font-family:inherit">';
+  // 軸
+  s+='<line x1="'+pl+'" y1="'+pt+'" x2="'+pl+'" y2="'+(pt+ph)+'" stroke="var(--bd)" stroke-width="1"/>';
+  s+='<line x1="'+pl+'" y1="'+(pt+ph)+'" x2="'+(pl+pw)+'" y2="'+(pt+ph)+'" stroke="var(--bd)" stroke-width="1"/>';
+  // グリッド＋目盛
+  for(var g=1;g<=4;g++){var gx=pl+pw*g/4,gy=pt+ph-ph*g/4;s+='<line x1="'+pl+'" y1="'+gy+'" x2="'+(pl+pw)+'" y2="'+gy+'" stroke="var(--bd)" stroke-width="0.5" stroke-dasharray="2 3" opacity="0.5"/>';s+='<text x="'+(pl-6)+'" y="'+(gy+3)+'" text-anchor="end" font-size="9" fill="var(--tx3)">¥'+Math.round(yMax*g/4).toLocaleString()+'</text>';s+='<text x="'+gx+'" y="'+(pt+ph+14)+'" text-anchor="middle" font-size="9" fill="var(--tx3)">'+Math.round(xMax*g/4)+'分</text>';}
+  // 目標レート線 price=target*mfg/60
+  var lx2=xMax,ly2=target*xMax/60;if(ly2>yMax){ly2=yMax;lx2=yMax*60/target;}
+  s+='<line x1="'+X(0)+'" y1="'+Y(0)+'" x2="'+X(lx2)+'" y2="'+Y(ly2)+'" stroke="var(--rd)" stroke-width="1.5" stroke-dasharray="5 4" opacity="0.8"/>';
+  // 点
+  rows.forEach(function(r){var bad=r.rate<target;var col=bad?'var(--rd)':'var(--ac)';s+='<circle cx="'+X(r.d.mfgMin).toFixed(1)+'" cy="'+Y(r.d.price).toFixed(1)+'" r="5" fill="'+col+'" opacity="0.7"><title>'+esc(r.d.number)+' '+esc(r.d.name)+'\n単価 ¥'+r.d.price.toLocaleString()+' / '+r.d.mfgMin+'分 = ¥'+Math.round(r.rate).toLocaleString()+'/h</title></circle>';});
+  // 軸ラベル
+  s+='<text x="'+(pl+pw/2)+'" y="'+(H-6)+'" text-anchor="middle" font-size="10" fill="var(--tx3)">製造時間（分/個）</text>';
+  s+='<text x="14" y="'+(pt+ph/2)+'" text-anchor="middle" font-size="10" fill="var(--tx3)" transform="rotate(-90 14 '+(pt+ph/2)+')">単価（円）</text>';
+  s+='</svg></div>';
+  return s;
+}
 function toggleBoardCol(st){if(!S.boardCollapsed)S.boardCollapsed={};S.boardCollapsed[st]=!S.boardCollapsed[st];try{localStorage.setItem('dxp_boardCollapsed',JSON.stringify(S.boardCollapsed));}catch(e){}render();}
 function toast(msg){
   var el=document.getElementById('dxpToast');
@@ -3588,6 +3658,7 @@ function saveEdit(){
   orig.priority=document.getElementById('ePri').value;
   var qtyVal=document.getElementById('eQty').value;orig.qty=qtyVal?parseInt(qtyVal)||0:'';
   orig.deadline=document.getElementById('eDeadline').value||'';
+  var mfgVal=document.getElementById('eMfg')?document.getElementById('eMfg').value:'';orig.mfgMin=mfgVal?parseFloat(mfgVal)||0:'';
   var tgs=document.getElementById('eTg').value.trim();
   orig.tags=tgs?tgs.split(/[,、，]/).map(function(t){return t.trim()}).filter(Boolean):orig.tags;
   var oldRel=(orig.related||[]).slice();var newRel=(S.editRelated||[]);
