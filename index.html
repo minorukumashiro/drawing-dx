@@ -1246,8 +1246,8 @@ function render(){
   var h='<div class="nav"><div class="nav-logo"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg></div><div><div class="nav-title">図面DXプラットフォーム</div><div class="nav-sub">AI図面管理・類似検索</div></div><div class="nav-tabs">';
   var _mobile=isMobileDevice();
   // If mobile and current tab is 'master', switch to 'board'
-  if(_mobile&&S.tab==='master')S.tab='board';
-  var _tabs=_mobile?[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'},{k:'delivery',l:'納品カレンダー'},{k:'analytics',l:'生産性分析'}]:[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'},{k:'delivery',l:'納品カレンダー'},{k:'analytics',l:'生産性分析'},{k:'master',l:'マスター管理'}];
+  if(_mobile&&(S.tab==='master'||S.tab==='analytics'))S.tab='board';
+  var _tabs=_mobile?[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'},{k:'delivery',l:'納品カレンダー'}]:[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'},{k:'delivery',l:'納品カレンダー'},{k:'analytics',l:'生産性分析'},{k:'master',l:'マスター管理'}];
   _tabs.forEach(function(t){h+='<button class="nav-tab'+(S.tab===t.k?' active':'')+'" onclick="setTab(\''+t.k+'\')">'+t.l+'</button>'});
   var _ssc=(function(){var cm={connecting:'#0066CC',pushing:'#0066CC',synced:'#1B8C65',error:'#D70015',offline:'#86868b'};var tm={connecting:'⟳ 接続中...',pushing:'⟳ 同期中...',synced:'✓ 同期済',error:'⚠ 同期エラー',offline:'○ オフライン'};return{c:cm[fbSyncState]||'#86868b',t:tm[fbSyncState]||'○ オフライン'};})();
   h+='<div id="fbSyncStatus" style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;background:var(--bg2);color:'+_ssc.c+';white-space:nowrap;cursor:pointer" title="タップして再取得" onclick="mobileForcePull()">'+_ssc.t+'</div>';
