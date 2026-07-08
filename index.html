@@ -2158,7 +2158,7 @@ var WL_STATUSES=["製造中","完了"];
 var _wlSeq=0;
 function wlNewRow(){
   _wlSeq++;
-  return {id:'wlrow_'+Date.now()+'_'+_wlSeq,worker:'',machine:'',status:'製造中',note:'',insight:'',minutes:'',goodQty:'',ngQty:''};
+  return {id:'wlrow_'+Date.now()+'_'+_wlSeq,drawingId:'',worker:'',machine:'',status:'製造中',note:'',insight:'',minutes:'',goodQty:'',ngQty:''};
 }
 function wlEnsureRows(){if(!S.wlRows||!S.wlRows.length)S.wlRows=[wlNewRow()];}
 function wlAddRow(){wlEnsureRows();S.wlRows.push(wlNewRow());render();}
@@ -2171,6 +2171,13 @@ function wlSetField(id,field,value,silent){
   if(!silent)render();
 }
 function wlSetDate(v){S.wlDate=v;render();}
+function wlSetMfgMin(drawingId,value){
+  var d=DRAWINGS.find(function(x){return x.id===drawingId});
+  if(!d)return;
+  d.mfgMin=value?parseFloat(value)||0:'';
+  saveAll(true);
+  render();
+}
 function wlToggleShowAll(){S.wlShowAll=!S.wlShowAll;render();}
 function wlSave(){
   wlEnsureRows();
@@ -2180,7 +2187,7 @@ function wlSave(){
   valid.forEach(function(r){
     WORKLOGS.push({
       id:'wl_'+now+'_'+Math.random().toString(36).slice(2,7),
-      date:S.wlDate,worker:r.worker,machine:r.machine,status:r.status,
+      date:S.wlDate,drawingId:r.drawingId||null,worker:r.worker,machine:r.machine,status:r.status,
       note:r.note||'',insight:r.insight||'',
       minutes:r.status==='完了'?(parseInt(r.minutes,10)||0):null,
       goodQty:r.status==='完了'?(parseInt(r.goodQty,10)||0):null,
@@ -2210,6 +2217,16 @@ function worklogHTML(){
     var done=row.status==='完了';
     h+='<div style="position:relative;background:var(--bg);border:1px solid '+(done?'var(--gn)':'var(--bd)')+';border-radius:var(--r);padding:16px;box-shadow:var(--shadow)">';
     h+='<button onclick="wlRemoveRow(\''+row.id+'\')" title="削除" style="position:absolute;top:10px;right:10px;background:none;border:none;color:var(--tx3);font-size:16px;cursor:pointer;line-height:1">&times;</button>';
+    h+='<div class="f-field" style="margin-bottom:10px"><label>紐付ける図面</label><select onchange="wlSetField(\''+row.id+'\',\'drawingId\',this.value?parseInt(this.value,10):\'\')"><option value="">（図面を選択）</option>'+DRAWINGS.map(function(d){return'<option value="'+d.id+'"'+(row.drawingId===d.id?' selected':'')+'>'+esc(d.number)+' '+esc(d.name)+' ('+esc(d.client||'—')+')</option>'}).join('')+'</select></div>';
+    (function(){
+      var wd=row.drawingId?DRAWINGS.find(function(x){return x.id===row.drawingId}):null;
+      if(wd){
+        h+='<div class="f-row" style="grid-template-columns:1fr 1fr;margin-bottom:10px">';
+        h+='<div class="f-field"><label>製造時間（分/個）<span style="font-weight:400;text-transform:none;color:var(--tx3)">・全端末で共有</span></label><input type="number" step="0.1" min="0" value="'+esc(String(wd.mfgMin||''))+'" onwheel="this.blur()" onchange="wlSetMfgMin('+wd.id+',this.value)" placeholder="例: 45"></div>';
+        h+='<div class="f-field"><label>時間あたり付加価値（自動計算）</label><input value="'+(wd.mfgMin&&wd.price?('¥'+Math.round(wd.price*60/wd.mfgMin).toLocaleString()+' /h'):'—')+'" readonly style="background:var(--bg2);color:var(--tx2)"></div>';
+        h+='</div>';
+      }
+    })();
     h+='<div class="f-row" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:10px">';
     h+='<div class="f-field"><label>名前</label><select onchange="wlSetField(\''+row.id+'\',\'worker\',this.value)"><option value="">選択…</option>'+MASTERS.worklogWorkers.map(function(w){return'<option'+(row.worker===w?' selected':'')+'>'+esc(w)+'</option>'}).join('')+'</select></div>';
     h+='<div class="f-field"><label>機械番号</label><select onchange="wlSetField(\''+row.id+'\',\'machine\',this.value)"><option value="">選択…</option>'+MASTERS.worklogMachines.map(function(m){return'<option'+(row.machine===m?' selected':'')+'>'+esc(m)+'</option>'}).join('')+'</select></div>';
@@ -2246,10 +2263,12 @@ function worklogHTML(){
     h+='<div style="background:var(--bg2);border:1px dashed var(--bd);border-radius:var(--r);padding:24px;text-align:center;color:var(--tx3);font-size:13px">まだ記録がありません</div>';
   }else{
     h+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:760px">';
-    h+='<thead><tr style="background:var(--bg2);color:var(--tx3);text-align:left"><th style="padding:8px 10px">日付</th><th style="padding:8px 10px">名前</th><th style="padding:8px 10px">機械番号</th><th style="padding:8px 10px">ステータス</th><th style="padding:8px 10px;text-align:right">時間</th><th style="padding:8px 10px;text-align:right">良品</th><th style="padding:8px 10px;text-align:right">不良</th><th style="padding:8px 10px">備考</th><th style="padding:8px 10px">気付き</th><th></th></tr></thead><tbody>';
+    h+='<thead><tr style="background:var(--bg2);color:var(--tx3);text-align:left"><th style="padding:8px 10px">日付</th><th style="padding:8px 10px">図面</th><th style="padding:8px 10px">名前</th><th style="padding:8px 10px">機械番号</th><th style="padding:8px 10px">ステータス</th><th style="padding:8px 10px;text-align:right">時間</th><th style="padding:8px 10px;text-align:right">良品</th><th style="padding:8px 10px;text-align:right">不良</th><th style="padding:8px 10px">備考</th><th style="padding:8px 10px">気付き</th><th></th></tr></thead><tbody>';
     hist.forEach(function(w){
       var done=w.status==='完了';
-      h+='<tr style="border-bottom:1px solid var(--bd)"><td style="padding:8px 10px;color:var(--tx2)">'+esc(w.date)+'</td><td style="padding:8px 10px;font-weight:600">'+esc(w.worker)+'</td><td style="padding:8px 10px">'+esc(w.machine)+'</td><td style="padding:8px 10px"><span style="padding:2px 8px;border-radius:6px;font-size:10px;font-weight:700;background:'+(done?'#E8F5EE':'var(--ac2)')+';color:'+(done?'#1B8C65':'var(--ac)')+'">'+esc(w.status)+'</span></td><td style="padding:8px 10px;text-align:right">'+(w.minutes?w.minutes+'分':'—')+'</td><td style="padding:8px 10px;text-align:right">'+(w.goodQty||'—')+'</td><td style="padding:8px 10px;text-align:right;color:'+(w.ngQty?'var(--rd)':'inherit')+'">'+(w.ngQty||'—')+'</td><td style="padding:8px 10px;color:var(--tx2)">'+esc(w.note)+'</td><td style="padding:8px 10px;color:var(--tx2)">'+esc(w.insight)+'</td><td style="padding:8px 10px"><button onclick="wlDelete(\''+w.id+'\')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:11px">削除</button></td></tr>';
+      var wd=w.drawingId?DRAWINGS.find(function(x){return x.id===w.drawingId}):null;
+      var dwgCell=wd?'<span style="cursor:pointer;color:var(--ac);font-weight:600" onclick="openDetail('+wd.id+')" title="図面詳細を開く">'+esc(wd.number)+'</span><div style="color:var(--tx3);font-size:10px">'+esc(wd.name)+'</div>':'<span style="color:var(--tx3)">—</span>';
+      h+='<tr style="border-bottom:1px solid var(--bd)"><td style="padding:8px 10px;color:var(--tx2)">'+esc(w.date)+'</td><td style="padding:8px 10px">'+dwgCell+'</td><td style="padding:8px 10px;font-weight:600">'+esc(w.worker)+'</td><td style="padding:8px 10px">'+esc(w.machine)+'</td><td style="padding:8px 10px"><span style="padding:2px 8px;border-radius:6px;font-size:10px;font-weight:700;background:'+(done?'#E8F5EE':'var(--ac2)')+';color:'+(done?'#1B8C65':'var(--ac)')+'">'+esc(w.status)+'</span></td><td style="padding:8px 10px;text-align:right">'+(w.minutes?w.minutes+'分':'—')+'</td><td style="padding:8px 10px;text-align:right">'+(w.goodQty||'—')+'</td><td style="padding:8px 10px;text-align:right;color:'+(w.ngQty?'var(--rd)':'inherit')+'">'+(w.ngQty||'—')+'</td><td style="padding:8px 10px;color:var(--tx2)">'+esc(w.note)+'</td><td style="padding:8px 10px;color:var(--tx2)">'+esc(w.insight)+'</td><td style="padding:8px 10px"><button onclick="wlDelete(\''+w.id+'\')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:11px">削除</button></td></tr>';
     });
     h+='</tbody></table></div>';
   }
