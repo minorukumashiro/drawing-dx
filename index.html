@@ -204,6 +204,10 @@ var FIREBASE_CONFIG={
   appId:"1:703086288375:web:57a49db8932d4dae5462f2"
 };
 var fbApp=null,fbDB=null,fbEnabled=false,fbSyncing=false,fbUnsubscribe=null,fbLastLocalChange=0;
+// 直近のローカル ステータス変更を一定時間優先する（他端末の古いデータによる上書き＝戻り を防ぐ）
+var pendingStatusEdits={}; // id -> {status, lastAccess, until}
+var PENDING_STATUS_TTL=30000;
+function markStatusEdit(id,status,lastAccess){pendingStatusEdits[String(id)]={status:status,lastAccess:lastAccess,until:Date.now()+PENDING_STATUS_TTL};}
 // Force re-sync all images on first push after this version (better quality)
 window._fbSyncedImages={};
 
@@ -568,9 +572,9 @@ function fbPushAll(skipImages){
   // 画像アップロード中でも skipImages=true(メタのみ)は通す。60秒超で fbSyncing 自動リセット。
   if(fbSyncing&&!skipImages){
     if(window._fbSyncingAt&&Date.now()-window._fbSyncingAt>60000){fbSyncing=false;}
-    else return;
+    else{clearTimeout(window._fbSyncTimer);window._fbSyncTimer=setTimeout(function(){fbPushAll(skipImages);},1500);return;}
   }
-  if(fbMetaSyncing)return;
+  if(fbMetaSyncing){clearTimeout(window._fbSyncTimer);window._fbSyncTimer=setTimeout(function(){fbPushAll(skipImages);},800);return;}
   // Firebase からの初回 snapshot を受け取る前に push しない
   if(!window._fbSnapshotReceived){
     clearTimeout(window._fbSyncTimer);
@@ -736,7 +740,20 @@ function fbStartListener(){
     // 自分のエコーのみ抑制（他デバイスの変更は常に適用）
     if(data.lastClient===fbClientId()&&Date.now()-fbLastLocalChange<15000)return;
     // Merge: server data overwrites local
-    if(data.drawings){DRAWINGS=data.drawings;DRAWINGS.forEach(function(d){if(d.status==='検図中')d.status='検討中';});}
+    if(data.drawings){
+      DRAWINGS=data.drawings;DRAWINGS.forEach(function(d){if(d.status==='検図中')d.status='検討中';});
+      // 直近のローカル ステータス変更を優先: 受信データが古い値なら再適用し、サーバーに押し返す
+      var _pnow=Date.now(),_reassert=false;
+      Object.keys(pendingStatusEdits).forEach(function(pid){
+        var pe=pendingStatusEdits[pid];
+        if(pe.until<_pnow){delete pendingStatusEdits[pid];return;}
+        var pd=DRAWINGS.find(function(x){return String(x.id)===pid;});
+        if(!pd){delete pendingStatusEdits[pid];return;}
+        if(pd.status!==pe.status){pd.status=pe.status;if(pe.lastAccess!=null)pd.lastAccess=pe.lastAccess;_reassert=true;}
+        else{delete pendingStatusEdits[pid];} // サーバーが追いついたので解除
+      });
+      if(_reassert){fbLastLocalChange=Date.now();clearTimeout(window._fbSyncTimer);window._fbSyncTimer=setTimeout(function(){fbPushAll(true);},800);}
+    }
     if(data.masters){MASTERS=data.masters;if(MASTERS.statuses){var idx=MASTERS.statuses.indexOf('検図中');if(idx>=0)MASTERS.statuses[idx]='検討中';}}
     if(MASTERS.statuses&&MASTERS.statuses.indexOf('完了')<0){var _ni=MASTERS.statuses.indexOf('納品済');if(_ni>=0)MASTERS.statuses.splice(_ni,0,'完了');else MASTERS.statuses.push('完了');}
     if(data.inspections){
@@ -2153,7 +2170,7 @@ function toast(msg){
 }
 function openDetail(id){var d=DRAWINGS.find(function(x){return x.id===id});if(d){S.detail=Object.assign({},d,{_sim:0});render()}}
 function closeDetail(){S.detail=null;render()}
-function changeStatus(id,newStatus){var d=DRAWINGS.find(function(x){return x.id===id});if(!d)return;var prev=d.status;d.status=newStatus;if(newStatus==='納品済')d.lastAccess=new Date().toISOString().slice(0,10);if(S.detail&&S.detail.id===id){S.detail.status=newStatus;if(newStatus==='納品済')S.detail.lastAccess=d.lastAccess;}saveAll(true);if(newStatus==='納品済'&&prev!=='納品済'){openTranscribe(id);}else{render();}}
+function changeStatus(id,newStatus){var d=DRAWINGS.find(function(x){return x.id===id});if(!d)return;var prev=d.status;d.status=newStatus;if(newStatus==='納品済')d.lastAccess=new Date().toISOString().slice(0,10);markStatusEdit(id,d.status,d.lastAccess);if(S.detail&&S.detail.id===id){S.detail.status=newStatus;if(newStatus==='納品済')S.detail.lastAccess=d.lastAccess;}saveAll(true);if(newStatus==='納品済'&&prev!=='納品済'){openTranscribe(id);}else{render();}}
 
 // ===== 納品カレンダー =====
 // 図面のサムネイル(dataURL)を取得。なければ空文字。
@@ -3655,6 +3672,7 @@ function saveEdit(){
   var _prevStatus=orig.status;
   orig.status=document.getElementById('eSt').value;
   if(orig.status==='納品済')orig.lastAccess=new Date().toISOString().slice(0,10);
+  markStatusEdit(orig.id,orig.status,orig.lastAccess);
   orig.priority=document.getElementById('ePri').value;
   var qtyVal=document.getElementById('eQty').value;orig.qty=qtyVal?parseInt(qtyVal)||0:'';
   orig.deadline=document.getElementById('eDeadline').value||'';
