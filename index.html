@@ -2115,13 +2115,14 @@ function setTargetRate(v){var n=parseFloat(v);S.targetRate=(!isNaN(n)&&n>0)?n:40
 function analyticsHTML(){
   var target=S.targetRate&&S.targetRate>0?S.targetRate:4000;
   var withT=DRAWINGS.filter(function(d){return d.mfgMin&&d.mfgMin>0&&d.price&&d.price>0;});
+  var wlByDrawing=wlAggByDrawing();
+  var yen=function(n){return '¥'+Math.round(n).toLocaleString();};
   var h='<div class="section-title">生産性分析 — 時間あたり付加価値（¥/h）</div>';
-  h+='<div style="margin-bottom:14px;font-size:12px;color:var(--tx3);line-height:1.7">単価 ÷ 製造時間で「時間あたりいくら稼げているか」を算出し、低い図面・取引先＝<b style="color:var(--rd)">改善投資のリターンが最大</b>の箇所をあぶり出します。図面編集画面の「製造時間（分/個）」を入力すると集計されます。</div>';
+  h+='<div style="margin-bottom:14px;font-size:12px;color:var(--tx3);line-height:1.7">単価 ÷ 製造時間で「時間あたりいくら稼げているか」を算出し、低い図面・取引先＝<b style="color:var(--rd)">改善投資のリターンが最大</b>の箇所をあぶり出します。図面編集画面の「製造時間（分/個）」を入力すると集計されます。作業日報で記録した実績（作業時間・良品数・不良数）は図面IDで突き合わせ、実績ベースの値として合わせて表示します。</div>';
   h+='<div style="margin-bottom:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><label style="font-size:12px;color:var(--tx2);font-weight:600">目標チャージレート</label><input type="number" value="'+target+'" onwheel="this.blur()" onchange="setTargetRate(this.value)" style="width:110px;padding:7px 10px;border:1px solid var(--bd);border-radius:8px;font-size:13px"><span style="font-size:12px;color:var(--tx3)">円/時 未満を<b style="color:var(--rd)">赤字リスク</b>として表示</span></div>';
   if(!withT.length){
     h+='<div style="background:var(--bg2);border:1px dashed var(--bd);border-radius:var(--r);padding:32px 22px;text-align:center;color:var(--tx3);font-size:13px">製造時間が入力された図面がまだありません。<br>図面一覧や案件ボードから図面を開き、<b>編集</b>画面の「製造時間（分/個）」を入力すると、ここに分析が表示されます。</div>';
-    return h;
-  }
+  }else{
   var rows=withT.map(function(d){var qty=d.qty&&d.qty>0?d.qty:1;return{d:d,rate:d.price*60/d.mfgMin,totalH:d.mfgMin*qty/60,qty:qty};});
   var rates=rows.map(function(r){return r.rate;});
   var avgRate=rates.reduce(function(a,b){return a+b;},0)/rates.length;
@@ -2129,19 +2130,29 @@ function analyticsHTML(){
   var median=sorted.length%2?sorted[(sorted.length-1)/2]:(sorted[sorted.length/2-1]+sorted[sorted.length/2])/2;
   var totalHours=rows.reduce(function(a,r){return a+r.totalH;},0);
   var belowN=rows.filter(function(r){return r.rate<target;}).length;
-  var yen=function(n){return '¥'+Math.round(n).toLocaleString();};
+  var wlLinkedN=rows.filter(function(r){return wlByDrawing[r.d.id];}).length;
   // KPIカード
   h+='<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px">';
-  [['対象図面数',withT.length+' 件','var(--tx)'],['平均 ¥/h',yen(avgRate)+' /h','var(--ac)'],['中央値 ¥/h',yen(median)+' /h','var(--tx)'],['目標未満',belowN+' 件','var(--rd)'],['総製造工数',totalHours.toFixed(1)+' h','var(--tx)']].forEach(function(k){h+='<div style="flex:1;min-width:120px;background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:12px 16px;box-shadow:var(--shadow)"><div style="font-size:10px;color:var(--tx3);font-weight:500">'+k[0]+'</div><div style="font-size:20px;font-weight:700;color:'+k[2]+'">'+k[1]+'</div></div>';});
+  [['対象図面数',withT.length+' 件','var(--tx)'],['平均 ¥/h',yen(avgRate)+' /h','var(--ac)'],['中央値 ¥/h',yen(median)+' /h','var(--tx)'],['目標未満',belowN+' 件','var(--rd)'],['総製造工数',totalHours.toFixed(1)+' h','var(--tx)'],['作業日報 実績あり',wlLinkedN+' 件','var(--ac)']].forEach(function(k){h+='<div style="flex:1;min-width:120px;background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:12px 16px;box-shadow:var(--shadow)"><div style="font-size:10px;color:var(--tx3);font-weight:500">'+k[0]+'</div><div style="font-size:20px;font-weight:700;color:'+k[2]+'">'+k[1]+'</div></div>';});
   h+='</div>';
   // 散布図
   h+=scatterSVG(rows,target);
   // ¥/hランキング（ワースト順）
   var ranked=rows.slice().sort(function(a,b){return a.rate-b.rate;});
   h+='<div class="section-title" style="font-size:14px;margin-top:24px">¥/h ワーストランキング（改善優先度順）</div>';
-  h+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:640px">';
-  h+='<thead><tr style="background:var(--bg2);color:var(--tx3);text-align:left"><th style="padding:8px 10px">順位</th><th style="padding:8px 10px">図番</th><th style="padding:8px 10px">品名</th><th style="padding:8px 10px">取引先</th><th style="padding:8px 10px;text-align:right">単価</th><th style="padding:8px 10px;text-align:right">製造時間</th><th style="padding:8px 10px;text-align:right">¥/h</th><th style="padding:8px 10px">判定</th></tr></thead><tbody>';
-  ranked.slice(0,25).forEach(function(r,i){var d=r.d;var bad=r.rate<target;var warn=r.rate<median;var col=bad?'var(--rd)':(warn?'var(--am)':'var(--gn)');var tag=bad?'<span style="padding:2px 8px;border-radius:6px;background:var(--rd2);color:var(--rd);font-size:10px;font-weight:700">赤字リスク</span>':(warn?'<span style="padding:2px 8px;border-radius:6px;background:var(--am2);color:var(--am);font-size:10px;font-weight:700">要改善</span>':'<span style="padding:2px 8px;border-radius:6px;background:#E8F5EE;color:var(--gn);font-size:10px;font-weight:700">良好</span>');h+='<tr style="border-bottom:1px solid var(--bd);cursor:pointer" onclick="editDrawing('+d.id+')"><td style="padding:8px 10px;color:var(--tx3)">'+(i+1)+'</td><td style="padding:8px 10px;font-weight:600">'+esc(d.number)+'</td><td style="padding:8px 10px">'+esc(d.name)+'</td><td style="padding:8px 10px;color:var(--tx2)">'+esc(d.client||'—')+'</td><td style="padding:8px 10px;text-align:right">'+yen(d.price)+'</td><td style="padding:8px 10px;text-align:right;color:var(--tx2)">'+d.mfgMin+' 分</td><td style="padding:8px 10px;text-align:right;font-weight:700;color:'+col+'">'+yen(r.rate)+'</td><td style="padding:8px 10px">'+tag+'</td></tr>';});
+  h+='<div style="margin-bottom:8px;font-size:11px;color:var(--tx3)">「実績¥/h」「実績良品率」は作業日報（完了記録・図面ID突き合わせ）に基づく実際の値です。未記録の図面は「—」と表示されます。</div>';
+  h+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:820px">';
+  h+='<thead><tr style="background:var(--bg2);color:var(--tx3);text-align:left"><th style="padding:8px 10px">順位</th><th style="padding:8px 10px">図番</th><th style="padding:8px 10px">品名</th><th style="padding:8px 10px">取引先</th><th style="padding:8px 10px;text-align:right">単価</th><th style="padding:8px 10px;text-align:right">製造時間</th><th style="padding:8px 10px;text-align:right">¥/h</th><th style="padding:8px 10px;text-align:right">実績¥/h</th><th style="padding:8px 10px;text-align:right">実績良品率</th><th style="padding:8px 10px">判定</th></tr></thead><tbody>';
+  ranked.slice(0,25).forEach(function(r,i){
+    var d=r.d;var bad=r.rate<target;var warn=r.rate<median;var col=bad?'var(--rd)':(warn?'var(--am)':'var(--gn)');
+    var tag=bad?'<span style="padding:2px 8px;border-radius:6px;background:var(--rd2);color:var(--rd);font-size:10px;font-weight:700">赤字リスク</span>':(warn?'<span style="padding:2px 8px;border-radius:6px;background:var(--am2);color:var(--am);font-size:10px;font-weight:700">要改善</span>':'<span style="padding:2px 8px;border-radius:6px;background:#E8F5EE;color:var(--gn);font-size:10px;font-weight:700">良好</span>');
+    var wl=wlByDrawing[d.id];
+    var actTotal=wl?wl.good+wl.ng:0;
+    var actYield=actTotal>0?wl.good/actTotal*100:null;
+    var actRate=(wl&&wl.minutes>0&&d.price)?d.price*wl.good*60/wl.minutes:null;
+    var actCol=actRate!=null?(actRate<target?'var(--rd)':'var(--gn)'):'var(--tx3)';
+    h+='<tr style="border-bottom:1px solid var(--bd);cursor:pointer" onclick="editDrawing('+d.id+')"><td style="padding:8px 10px;color:var(--tx3)">'+(i+1)+'</td><td style="padding:8px 10px;font-weight:600">'+esc(d.number)+'</td><td style="padding:8px 10px">'+esc(d.name)+'</td><td style="padding:8px 10px;color:var(--tx2)">'+esc(d.client||'—')+'</td><td style="padding:8px 10px;text-align:right">'+yen(d.price)+'</td><td style="padding:8px 10px;text-align:right;color:var(--tx2)">'+d.mfgMin+' 分</td><td style="padding:8px 10px;text-align:right;font-weight:700;color:'+col+'">'+yen(r.rate)+'</td><td style="padding:8px 10px;text-align:right;font-weight:700;color:'+actCol+'">'+(actRate!=null?yen(actRate):'—')+'</td><td style="padding:8px 10px;text-align:right">'+(actYield!=null?actYield.toFixed(1)+'%':'—')+'</td><td style="padding:8px 10px">'+tag+'</td></tr>';
+  });
   h+='</tbody></table></div>';
   // 取引先別チャージレート
   var byCl={};rows.forEach(function(r){var c=r.d.client||'（未設定）';if(!byCl[c])byCl[c]={sales:0,hours:0,n:0};byCl[c].sales+=r.d.price*r.qty;byCl[c].hours+=r.totalH;byCl[c].n++;});
@@ -2151,6 +2162,8 @@ function analyticsHTML(){
   h+='<div style="background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:14px 18px;box-shadow:var(--shadow)">';
   clArr.forEach(function(o){var bad=o.rate<target;var col=bad?'var(--rd)':(o.rate<median?'var(--am)':'var(--gn)');var w=Math.max(3,o.rate/maxClRate*100);h+='<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="font-weight:600">'+esc(o.client)+' <span style="color:var(--tx3);font-weight:400">('+o.n+'件 / '+o.hours.toFixed(1)+'h)</span></span><span style="font-weight:700;color:'+col+'">'+yen(o.rate)+' /h</span></div><div style="height:10px;background:var(--bg2);border-radius:5px;overflow:hidden"><div style="height:100%;width:'+w+'%;background:'+col+';border-radius:5px"></div></div></div>';});
   h+='</div>';
+  }
+  h+=wlProductivityHTML(target);
   return h;
 }
 // ===== 作業日報 =====
@@ -2206,6 +2219,61 @@ function wlDelete(id){
   if(!confirm('この記録を削除しますか？'))return;
   WORKLOGS=WORKLOGS.filter(function(w){return w.id!==id});
   saveAll(true);render();
+}
+// 完了記録を図面IDで集計（生産性分析の実績値に使用）
+function wlAggByDrawing(){
+  var m={};
+  WORKLOGS.forEach(function(w){
+    if(w.status!=='完了'||!w.drawingId)return;
+    var a=m[w.drawingId];if(!a)a=m[w.drawingId]={minutes:0,good:0,ng:0,n:0};
+    a.minutes+=w.minutes||0;a.good+=w.goodQty||0;a.ng+=w.ngQty||0;a.n++;
+  });
+  return m;
+}
+// 完了記録を作業者/機械番号で集計。valueYenは紐付いた図面の単価×良品数の合計（実績¥/hの算出に使用）
+function wlAggByField(field){
+  var m={};
+  WORKLOGS.forEach(function(w){
+    if(w.status!=='完了')return;
+    var k=w[field];if(!k)return;
+    var a=m[k];if(!a)a=m[k]={minutes:0,good:0,ng:0,n:0,valueYen:0};
+    a.minutes+=w.minutes||0;a.good+=w.goodQty||0;a.ng+=w.ngQty||0;a.n++;
+    if(w.drawingId){
+      var d=DRAWINGS.find(function(x){return x.id===w.drawingId});
+      if(d&&d.price)a.valueYen+=d.price*(w.goodQty||0);
+    }
+  });
+  return m;
+}
+function wlProductivityHTML(target){
+  var yen=function(n){return '¥'+Math.round(n).toLocaleString();};
+  var doneLogs=WORKLOGS.filter(function(w){return w.status==='完了';});
+  var h='<div class="section-title" style="font-size:14px;margin-top:28px">実績生産性（作業日報より）</div>';
+  h+='<div style="margin-bottom:14px;font-size:12px;color:var(--tx3);line-height:1.7">作業日報の「作業時間・良品数・不良数」を図面IDで突き合わせ、実際に稼いだ時間あたり付加価値（良品数×単価 ÷ 実働時間）を作業者別・機械番号別に算出します。</div>';
+  if(!doneLogs.length){
+    h+='<div style="background:var(--bg2);border:1px dashed var(--bd);border-radius:var(--r);padding:32px 22px;text-align:center;color:var(--tx3);font-size:13px">「完了」ステータスの作業日報がまだありません。<br>作業日報タブで作業時間・良品数・不良数を記録すると、ここに実績分析が表示されます。</div>';
+    return h;
+  }
+  var totals=doneLogs.reduce(function(a,w){a.min+=w.minutes||0;a.good+=w.goodQty||0;a.ng+=w.ngQty||0;return a;},{min:0,good:0,ng:0});
+  var yieldPct=(totals.good+totals.ng)>0?totals.good/(totals.good+totals.ng)*100:0;
+  h+='<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px">';
+  [['完了記録数',doneLogs.length+' 件','var(--tx)'],['総実働時間',(totals.min/60).toFixed(1)+' h','var(--tx)'],['総良品数',totals.good+' 個','var(--ac)'],['総不良数',totals.ng+' 個','var(--rd)'],['総合良品率',yieldPct.toFixed(1)+' %',yieldPct<95?'var(--am)':'var(--gn)']].forEach(function(k){h+='<div style="flex:1;min-width:120px;background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:12px 16px;box-shadow:var(--shadow)"><div style="font-size:10px;color:var(--tx3);font-weight:500">'+k[0]+'</div><div style="font-size:20px;font-weight:700;color:'+k[2]+'">'+k[1]+'</div></div>';});
+  h+='</div>';
+  function renderAggTable(label,agg,keyLabel){
+    var arr=Object.keys(agg).map(function(k){var a=agg[k];var hours=a.minutes/60;var rate=hours>0?a.valueYen/hours:0;var total=a.good+a.ng;var yp=total>0?a.good/total*100:null;return{key:k,hours:hours,good:a.good,ng:a.ng,n:a.n,rate:rate,yield:yp};}).sort(function(x,y){return x.rate-y.rate;});
+    var out='<div class="section-title" style="font-size:13px;margin-top:20px">'+label+'</div>';
+    out+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:600px">';
+    out+='<thead><tr style="background:var(--bg2);color:var(--tx3);text-align:left"><th style="padding:8px 10px">'+keyLabel+'</th><th style="padding:8px 10px;text-align:right">記録数</th><th style="padding:8px 10px;text-align:right">実働時間</th><th style="padding:8px 10px;text-align:right">良品</th><th style="padding:8px 10px;text-align:right">不良</th><th style="padding:8px 10px;text-align:right">良品率</th><th style="padding:8px 10px;text-align:right">実績¥/h</th></tr></thead><tbody>';
+    arr.forEach(function(o){
+      var col=o.rate>0?(o.rate<target?'var(--rd)':'var(--gn)'):'var(--tx3)';
+      out+='<tr style="border-bottom:1px solid var(--bd)"><td style="padding:8px 10px;font-weight:600">'+esc(o.key)+'</td><td style="padding:8px 10px;text-align:right;color:var(--tx2)">'+o.n+'</td><td style="padding:8px 10px;text-align:right;color:var(--tx2)">'+o.hours.toFixed(1)+' h</td><td style="padding:8px 10px;text-align:right">'+o.good+'</td><td style="padding:8px 10px;text-align:right;color:'+(o.ng?'var(--rd)':'inherit')+'">'+o.ng+'</td><td style="padding:8px 10px;text-align:right">'+(o.yield!=null?o.yield.toFixed(1)+'%':'—')+'</td><td style="padding:8px 10px;text-align:right;font-weight:700;color:'+col+'">'+(o.rate>0?yen(o.rate)+'/h':'—')+'</td></tr>';
+    });
+    out+='</tbody></table></div>';
+    return out;
+  }
+  h+=renderAggTable('作業者別実績（改善優先度順）',wlAggByField('worker'),'名前');
+  h+=renderAggTable('機械番号別実績（改善優先度順）',wlAggByField('machine'),'機械番号');
+  return h;
 }
 function worklogHTML(){
   wlEnsureRows();
