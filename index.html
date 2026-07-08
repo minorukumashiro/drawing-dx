@@ -370,7 +370,7 @@ function loadData(){
       var tx=db.transaction('meta','readonly');
       var store=tx.objectStore('meta');
       var reqs={};
-      ['drawings','invoices','scannedPdfs','pdfThumbs','nextId','masters','serverUrl','inspections','relatedFiles','relatedDocuments','annotations','deliveries'].forEach(function(k){
+      ['drawings','invoices','scannedPdfs','pdfThumbs','nextId','masters','serverUrl','inspections','relatedFiles','relatedDocuments','annotations','deliveries','worklogs'].forEach(function(k){
         reqs[k]=store.get(k);
       });
       tx.oncomplete=function(){
@@ -384,6 +384,7 @@ function loadData(){
         // window._cacheLoaded=true の場合は dxp_fbCache が既に DRAWINGS を設定済みなのでそのまま使用
         INVOICES=reqs.invoices.result||[];
         if(reqs.deliveries.result)DELIVERIES=reqs.deliveries.result;
+        if(reqs.worklogs.result)WORKLOGS=reqs.worklogs.result;
         scannedPdfs=reqs.scannedPdfs.result||{};
         pdfThumbnails=reqs.pdfThumbs.result||{};
         inspectionReports=reqs.inspections.result||{};
@@ -513,6 +514,7 @@ function saveAll(skipImages){
   dbPut('meta','relatedFiles',relatedFiles);
   dbPut('meta','relatedDocuments',relatedDocuments);
   dbPut('meta','annotations',ANNOTATIONS);
+  dbPut('meta','worklogs',WORKLOGS);
   // Save images individually
   Object.keys(scannedImages).forEach(function(id){
     dbPut('images',String(id),scannedImages[id]);
@@ -591,7 +593,7 @@ function fbPushAll(skipImages){
     fbMetaSyncing=true;
     var payload={
       drawings:DRAWINGS,masters:MASTERS,inspections:inspMeta(),relatedDocuments:relDocMeta(),
-      invoices:INVOICES,annotations:ANNOTATIONS,deliveries:DELIVERIES,nextId:nextId,
+      invoices:INVOICES,annotations:ANNOTATIONS,deliveries:DELIVERIES,worklogs:WORKLOGS,nextId:nextId,
       lastModified:firebase.firestore.FieldValue.serverTimestamp(),
       lastClient:fbClientId()
     };
@@ -823,6 +825,7 @@ function fbStartListener(){
     if(data.invoices)INVOICES=data.invoices;
     if(data.deliveries)DELIVERIES=data.deliveries;
     if(data.annotations)ANNOTATIONS=data.annotations;
+    if(data.worklogs)WORKLOGS=data.worklogs;
     if(data.nextId)nextId=Math.max(nextId,data.nextId);
     // Save to IndexedDB
     dbPut('meta','drawings',DRAWINGS);
@@ -832,6 +835,7 @@ function fbStartListener(){
     dbPut('meta','relatedDocuments',relatedDocuments);
     dbPut('meta','invoices',INVOICES);
     dbPut('meta','annotations',ANNOTATIONS);
+    dbPut('meta','worklogs',WORKLOGS);
     dbPut('meta','nextId',nextId);
     // Cache in localStorage for next session's instant load
     try{
@@ -843,6 +847,7 @@ function fbStartListener(){
         invoices:INVOICES,
         annotations:ANNOTATIONS,
         deliveries:DELIVERIES,
+        worklogs:WORKLOGS,
         nextId:nextId
       }));
     }catch(e){/* localStorage may be full */}
@@ -997,7 +1002,7 @@ async function forcePushToFirebase(){
     await fbPushImages();
     var payload={
       drawings:DRAWINGS,masters:MASTERS,inspections:inspMeta(),relatedDocuments:relDocMeta(),
-      invoices:INVOICES,annotations:ANNOTATIONS,deliveries:DELIVERIES,nextId:nextId,
+      invoices:INVOICES,annotations:ANNOTATIONS,deliveries:DELIVERIES,worklogs:WORKLOGS,nextId:nextId,
       lastModified:firebase.firestore.FieldValue.serverTimestamp(),
       lastClient:fbClientId()
     };
@@ -1020,7 +1025,7 @@ function forceRestoreFromFirebase(){
   window._fbSnapshotReceived=false;
   window._cacheLoaded=false;
   dbClear(function(){
-    DRAWINGS=[];INVOICES=[];scannedImages={};scannedPdfs={};pdfThumbnails={};
+    DRAWINGS=[];INVOICES=[];WORKLOGS=[];scannedImages={};scannedPdfs={};pdfThumbnails={};
     render();
     fbStartListener();
     alert('Firebaseから再取得中です。\n数秒後にデータが表示されます。');
@@ -1034,6 +1039,7 @@ function exportAllData(){
     drawings:DRAWINGS,
     invoices:INVOICES,
     masters:MASTERS,
+    worklogs:WORKLOGS,
     nextId:nextId,
     scannedImages:{},
     scannedPdfs:scannedPdfs,
@@ -1066,6 +1072,7 @@ function importAllData(event){
       
       DRAWINGS=data.drawings||[];
       INVOICES=data.invoices||[];
+      WORKLOGS=data.worklogs||WORKLOGS;
       MASTERS=data.masters||JSON.parse(JSON.stringify(DEF_MASTERS));
       nextId=data.nextId||100;
       scannedPdfs=data.scannedPdfs||{};
@@ -1087,7 +1094,7 @@ function importAllData(event){
         updateSyncStatus('pushing');
         var _impPayload={
           drawings:DRAWINGS,masters:MASTERS,inspections:inspMeta(),relatedDocuments:relDocMeta(),
-          invoices:INVOICES,annotations:ANNOTATIONS,nextId:nextId,
+          invoices:INVOICES,annotations:ANNOTATIONS,worklogs:WORKLOGS,nextId:nextId,
           lastModified:firebase.firestore.FieldValue.serverTimestamp(),
           lastClient:fbClientId()
         };
@@ -1117,6 +1124,7 @@ var DELIVERIES=[]; // 納品カレンダー転記データ {id,drawingId,date,cl
 var locallyAddedRdocIds={};
 var _localImgVer={};try{var _livStr=localStorage.getItem('dxp_localImgVer');if(_livStr)_localImgVer=JSON.parse(_livStr);}catch(e){}
 var ANNOTATIONS={}; // {drawingId: {stamps:[], qrs:[], texts:[], lines:[], updated:timestamp}}
+var WORKLOGS=[]; // 作業日報 {id,date,worker,machine,status,note,insight,minutes,goodQty,ngQty,savedAt,savedBy}
 
 // マスターデータ（初期値）
 var DEF_MASTERS={
@@ -1126,6 +1134,8 @@ var DEF_MASTERS={
   clients:["東洋機械工業","三和精機","大阪金属工業","山陽アルミ","新日本工機","関東バルブ","松本精密"],
   statuses:["検討中","見積済","製造中","完了","納品済","その他"],
   surfaces:["メッキ","アルマイト","黒染め","ニッケル","クロム","亜鉛メッキ","無電解ニッケル","塗装"],
+  worklogWorkers:[], // 作業日報：名前マスタ
+  worklogMachines:[], // 作業日報：機械番号マスタ
   clientMap:{} // 図面DX取引先名 -> {code, yname}（弥生得意先台帳との突合結果）
 };
 var MASTERS={};
@@ -1150,6 +1160,7 @@ function bootApp(){
         if(data.invoices)INVOICES=data.invoices;
         if(data.deliveries)DELIVERIES=data.deliveries;
         if(data.annotations)ANNOTATIONS=data.annotations;
+        if(data.worklogs)WORKLOGS=data.worklogs;
         if(data.nextId)nextId=data.nextId;
         window._cacheLoaded=true; // IndexedDB が空でもこのデータを保持する
         // Render cached data instantly
@@ -1253,18 +1264,20 @@ function getPdfSrc(id){
 function simColor(v){return v>=80?"#1B8C65":v>=50?"#B06E15":"#888"}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}
 function isMobileDevice(){return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)||window.innerWidth<=768}
-var S={tab:'board',search:'',wbSearch:'',wbSearchInput:'',clientFilter:'',fcat:'すべて',minSim:0,sel:null,results:null,searching:false,detail:null,regOpen:false,regPrev:null,regName:'',regBlobUrl:null,regIsPdf:false,ocrSt:'idle',ocrF:{},invType:'見積書',invDrawing:null,invSearch:'',annoDrawing:null,annoSearch:'',annoPage:1,annoPageCount:0,annoTool:'pen',annoColor:'#C03030',annoStamps:[],annoQRs:[],annoTexts:[],annoLines:[],editOpen:false,editDwg:null,viewerId:null,bulkOpen:false,bulkItems:[],bulkSelected:0,verifyOpen:false};
+var S={tab:'board',search:'',wbSearch:'',wbSearchInput:'',clientFilter:'',fcat:'すべて',minSim:0,sel:null,results:null,searching:false,detail:null,regOpen:false,regPrev:null,regName:'',regBlobUrl:null,regIsPdf:false,ocrSt:'idle',ocrF:{},invType:'見積書',invDrawing:null,invSearch:'',annoDrawing:null,annoSearch:'',annoPage:1,annoPageCount:0,annoTool:'pen',annoColor:'#C03030',annoStamps:[],annoQRs:[],annoTexts:[],annoLines:[],editOpen:false,editDwg:null,viewerId:null,bulkOpen:false,bulkItems:[],bulkSelected:0,verifyOpen:false,wlDate:new Date().toISOString().slice(0,10),wlRows:null,wlSaved:false,wlShowAll:false};
 try{var _bc=localStorage.getItem('dxp_boardCollapsed');if(_bc)S.boardCollapsed=JSON.parse(_bc);}catch(e){}
 
 function render(){
   if(!window._bootStarted)return; // ログイン前は描画しない（ログイン画面を保護）
+  if(!MASTERS.worklogWorkers)MASTERS.worklogWorkers=[];
+  if(!MASTERS.worklogMachines)MASTERS.worklogMachines=[];
   var app=document.getElementById('app'),sts=["検討中","見積済","製造中","完了","納品済"],stC={"検討中":"#185FA5","見積済":"#B06E15","製造中":"var(--ac)","完了":"#0E7490","納品済":"#1B8C65"},stB={"検討中":"#E6F1FB","見積済":"#FDF3E0","製造中":"#EEEDFE","完了":"#E0F7FA","納品済":"#E8F5EE"},cats=["すべて"].concat(Array.from(new Set(DRAWINGS.map(function(d){return d.cat}))));
   var fl=DRAWINGS.filter(function(d){if(S.fcat!=='すべて'&&d.cat!==S.fcat)return false;if(S.clientFilter){var cf=S.clientFilter.toLowerCase();if((d.client||'').toLowerCase().indexOf(cf)<0)return false}if(S.search){var q=S.search.toLowerCase();return d.name.toLowerCase().indexOf(q)>=0||d.number.toLowerCase().indexOf(q)>=0||d.mat.toLowerCase().indexOf(q)>=0||d.client.toLowerCase().indexOf(q)>=0||d.size.toLowerCase().indexOf(q)>=0||(d.tags||[]).join(' ').toLowerCase().indexOf(q)>=0}return true});
   var h='<div class="nav"><div class="nav-logo"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg></div><div><div class="nav-title">図面DXプラットフォーム</div><div class="nav-sub">AI図面管理・類似検索</div></div><div class="nav-tabs">';
   var _mobile=isMobileDevice();
   // If mobile and current tab is 'master', switch to 'board'
   if(_mobile&&(S.tab==='master'||S.tab==='analytics'))S.tab='board';
-  var _tabs=_mobile?[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'},{k:'delivery',l:'納品カレンダー'}]:[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'},{k:'delivery',l:'納品カレンダー'},{k:'analytics',l:'生産性分析'},{k:'master',l:'マスター管理'}];
+  var _tabs=_mobile?[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'},{k:'worklog',l:'作業日報'},{k:'delivery',l:'納品カレンダー'}]:[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'},{k:'worklog',l:'作業日報'},{k:'delivery',l:'納品カレンダー'},{k:'analytics',l:'生産性分析'},{k:'master',l:'マスター管理'}];
   _tabs.forEach(function(t){h+='<button class="nav-tab'+(S.tab===t.k?' active':'')+'" onclick="setTab(\''+t.k+'\')">'+t.l+'</button>'});
   var _ssc=(function(){var cm={connecting:'#0066CC',pushing:'#0066CC',synced:'#1B8C65',error:'#D70015',offline:'#86868b'};var tm={connecting:'⟳ 接続中...',pushing:'⟳ 同期中...',synced:'✓ 同期済',error:'⚠ 同期エラー',offline:'○ オフライン'};return{c:cm[fbSyncState]||'#86868b',t:tm[fbSyncState]||'○ オフライン'};})();
   h+='<div id="fbSyncStatus" style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;background:var(--bg2);color:'+_ssc.c+';white-space:nowrap;cursor:pointer" title="タップして再取得" onclick="mobileForcePull()">'+_ssc.t+'</div>';
@@ -1288,6 +1301,9 @@ function render(){
 
   // 生産性分析
   if(S.tab==='analytics'){h+=analyticsHTML();}
+
+  // 作業日報
+  if(S.tab==='worklog'){h+=worklogHTML();}
 
   // 納品カレンダー
   if(S.tab==='delivery'){
@@ -1526,7 +1542,9 @@ function render(){
     var masterSections=[
       {key:'materials',label:'材質',ph:'例: SUS420'},
       {key:'clients',label:'取引先',ph:'例: 山田製作所'},
-      {key:'statuses',label:'ステータス',ph:'例: 出荷済'}
+      {key:'statuses',label:'ステータス',ph:'例: 出荷済'},
+      {key:'worklogWorkers',label:'作業日報：名前',ph:'例: 田中 一郎'},
+      {key:'worklogMachines',label:'作業日報：機械番号',ph:'例: M-01'}
     ];
     masterSections.forEach(function(sec){
       h+='<div style="background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:16px">';
@@ -2133,6 +2151,108 @@ function analyticsHTML(){
   h+='<div style="background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:14px 18px;box-shadow:var(--shadow)">';
   clArr.forEach(function(o){var bad=o.rate<target;var col=bad?'var(--rd)':(o.rate<median?'var(--am)':'var(--gn)');var w=Math.max(3,o.rate/maxClRate*100);h+='<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="font-weight:600">'+esc(o.client)+' <span style="color:var(--tx3);font-weight:400">('+o.n+'件 / '+o.hours.toFixed(1)+'h)</span></span><span style="font-weight:700;color:'+col+'">'+yen(o.rate)+' /h</span></div><div style="height:10px;background:var(--bg2);border-radius:5px;overflow:hidden"><div style="height:100%;width:'+w+'%;background:'+col+';border-radius:5px"></div></div></div>';});
   h+='</div>';
+  return h;
+}
+// ===== 作業日報 =====
+var WL_STATUSES=["製造中","完了"];
+var _wlSeq=0;
+function wlNewRow(){
+  _wlSeq++;
+  return {id:'wlrow_'+Date.now()+'_'+_wlSeq,worker:'',machine:'',status:'製造中',note:'',insight:'',minutes:'',goodQty:'',ngQty:''};
+}
+function wlEnsureRows(){if(!S.wlRows||!S.wlRows.length)S.wlRows=[wlNewRow()];}
+function wlAddRow(){wlEnsureRows();S.wlRows.push(wlNewRow());render();}
+function wlRemoveRow(id){wlEnsureRows();S.wlRows=S.wlRows.filter(function(r){return r.id!==id});if(!S.wlRows.length)S.wlRows=[wlNewRow()];render();}
+function wlSetField(id,field,value,silent){
+  wlEnsureRows();
+  var r=S.wlRows.find(function(x){return x.id===id});
+  if(!r)return;
+  r[field]=value;
+  if(!silent)render();
+}
+function wlSetDate(v){S.wlDate=v;render();}
+function wlToggleShowAll(){S.wlShowAll=!S.wlShowAll;render();}
+function wlSave(){
+  wlEnsureRows();
+  var valid=S.wlRows.filter(function(r){return r.worker&&r.machine});
+  if(!valid.length){alert('名前と機械番号を選択した記録がありません');return}
+  var now=Date.now();
+  valid.forEach(function(r){
+    WORKLOGS.push({
+      id:'wl_'+now+'_'+Math.random().toString(36).slice(2,7),
+      date:S.wlDate,worker:r.worker,machine:r.machine,status:r.status,
+      note:r.note||'',insight:r.insight||'',
+      minutes:r.status==='完了'?(parseInt(r.minutes,10)||0):null,
+      goodQty:r.status==='完了'?(parseInt(r.goodQty,10)||0):null,
+      ngQty:r.status==='完了'?(parseInt(r.ngQty,10)||0):null,
+      savedAt:now,
+      savedBy:(typeof AUTH_USER!=='undefined'&&AUTH_USER&&AUTH_USER.email)||''
+    });
+  });
+  saveAll(true);
+  S.wlRows=[wlNewRow()];
+  S.wlSaved=true;
+  render();
+  setTimeout(function(){S.wlSaved=false;render();},2500);
+}
+function wlDelete(id){
+  if(!confirm('この記録を削除しますか？'))return;
+  WORKLOGS=WORKLOGS.filter(function(w){return w.id!==id});
+  saveAll(true);render();
+}
+function worklogHTML(){
+  wlEnsureRows();
+  var h='<div class="section-title">作業日報</div>';
+  h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap"><label style="font-size:12px;color:var(--tx2);font-weight:600">日付</label><input type="date" value="'+esc(S.wlDate)+'" onchange="wlSetDate(this.value)" style="padding:7px 10px;border:1px solid var(--bd);border-radius:8px;font-size:13px;background:var(--bg);color:var(--tx)"></div>';
+
+  h+='<div style="display:flex;flex-direction:column;gap:12px;margin-bottom:14px">';
+  S.wlRows.forEach(function(row){
+    var done=row.status==='完了';
+    h+='<div style="position:relative;background:var(--bg);border:1px solid '+(done?'var(--gn)':'var(--bd)')+';border-radius:var(--r);padding:16px;box-shadow:var(--shadow)">';
+    h+='<button onclick="wlRemoveRow(\''+row.id+'\')" title="削除" style="position:absolute;top:10px;right:10px;background:none;border:none;color:var(--tx3);font-size:16px;cursor:pointer;line-height:1">&times;</button>';
+    h+='<div class="f-row" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:10px">';
+    h+='<div class="f-field"><label>名前</label><select onchange="wlSetField(\''+row.id+'\',\'worker\',this.value)"><option value="">選択…</option>'+MASTERS.worklogWorkers.map(function(w){return'<option'+(row.worker===w?' selected':'')+'>'+esc(w)+'</option>'}).join('')+'</select></div>';
+    h+='<div class="f-field"><label>機械番号</label><select onchange="wlSetField(\''+row.id+'\',\'machine\',this.value)"><option value="">選択…</option>'+MASTERS.worklogMachines.map(function(m){return'<option'+(row.machine===m?' selected':'')+'>'+esc(m)+'</option>'}).join('')+'</select></div>';
+    h+='<div class="f-field"><label>ステータス</label><div style="display:flex;gap:6px;margin-top:2px">'+WL_STATUSES.map(function(s){var on=row.status===s;var col=s==='完了'?'#1B8C65':'var(--ac)';return'<button type="button" onclick="wlSetField(\''+row.id+'\',\'status\',\''+s+'\')" style="flex:1;padding:8px 0;border-radius:8px;font-size:12px;font-weight:600;border:2px solid '+col+';cursor:pointer;background:'+(on?col:'transparent')+';color:'+(on?'#fff':col)+'">'+s+'</button>'}).join('')+'</div></div>';
+    h+='</div>';
+    if(done){
+      h+='<div class="f-row" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:10px">';
+      h+='<div class="f-field"><label>作業時間（分）</label><input type="number" min="0" value="'+esc(row.minutes)+'" onwheel="this.blur()" oninput="wlSetField(\''+row.id+'\',\'minutes\',this.value,true)"></div>';
+      h+='<div class="f-field"><label>良品数</label><input type="number" min="0" value="'+esc(row.goodQty)+'" onwheel="this.blur()" oninput="wlSetField(\''+row.id+'\',\'goodQty\',this.value,true)"></div>';
+      h+='<div class="f-field"><label>不良数</label><input type="number" min="0" value="'+esc(row.ngQty)+'" onwheel="this.blur()" oninput="wlSetField(\''+row.id+'\',\'ngQty\',this.value,true)" style="color:var(--rd)"></div>';
+      h+='</div>';
+    }
+    h+='<div class="f-row" style="grid-template-columns:1fr 1fr">';
+    h+='<div class="f-field"><label>備考</label><input type="text" value="'+esc(row.note)+'" oninput="wlSetField(\''+row.id+'\',\'note\',this.value,true)"></div>';
+    h+='<div class="f-field"><label>気付き</label><input type="text" value="'+esc(row.insight)+'" oninput="wlSetField(\''+row.id+'\',\'insight\',this.value,true)"></div>';
+    h+='</div>';
+    h+='</div>';
+  });
+  h+='</div>';
+
+  var validCount=S.wlRows.filter(function(r){return r.worker&&r.machine}).length;
+  h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:28px;flex-wrap:wrap">';
+  h+='<button class="g-btn" style="padding:8px 16px;font-size:12px" onclick="wlAddRow()">＋ 記録を追加</button>';
+  h+='<span style="font-size:12px;color:var(--tx3);margin-left:auto">'+validCount+' 件 入力中</span>';
+  h+='<button style="padding:9px 22px;border-radius:10px;border:none;background:'+(S.wlSaved?'#1B8C65':'var(--ac)')+';color:#fff;font-size:13px;font-weight:700;cursor:pointer" onclick="wlSave()" '+(validCount===0?'disabled':'')+'>'+(S.wlSaved?'✓ 保存しました':'日報を保存')+'</button>';
+  h+='</div>';
+
+  // 履歴
+  var hist=WORKLOGS.filter(function(w){return S.wlShowAll||w.date===S.wlDate}).slice().sort(function(a,b){return b.savedAt-a.savedAt});
+  var totals=hist.reduce(function(a,w){a.good+=w.goodQty||0;a.ng+=w.ngQty||0;a.min+=w.minutes||0;return a},{good:0,ng:0,min:0});
+  h+='<div class="section-title" style="margin-top:8px">記録一覧<label style="margin-left:auto;font-size:11px;color:var(--tx3);font-weight:400;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" '+(S.wlShowAll?'checked':'')+' onchange="wlToggleShowAll()">全期間表示</label></div>';
+  h+='<div style="font-size:11px;color:var(--tx3);margin-bottom:10px">'+hist.length+' 件'+(totals.good?' ／ 良品 '+totals.good:'')+(totals.ng?' ／ 不良 '+totals.ng:'')+(totals.min?' ／ 計 '+totals.min+' 分':'')+'</div>';
+  if(!hist.length){
+    h+='<div style="background:var(--bg2);border:1px dashed var(--bd);border-radius:var(--r);padding:24px;text-align:center;color:var(--tx3);font-size:13px">まだ記録がありません</div>';
+  }else{
+    h+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:760px">';
+    h+='<thead><tr style="background:var(--bg2);color:var(--tx3);text-align:left"><th style="padding:8px 10px">日付</th><th style="padding:8px 10px">名前</th><th style="padding:8px 10px">機械番号</th><th style="padding:8px 10px">ステータス</th><th style="padding:8px 10px;text-align:right">時間</th><th style="padding:8px 10px;text-align:right">良品</th><th style="padding:8px 10px;text-align:right">不良</th><th style="padding:8px 10px">備考</th><th style="padding:8px 10px">気付き</th><th></th></tr></thead><tbody>';
+    hist.forEach(function(w){
+      var done=w.status==='完了';
+      h+='<tr style="border-bottom:1px solid var(--bd)"><td style="padding:8px 10px;color:var(--tx2)">'+esc(w.date)+'</td><td style="padding:8px 10px;font-weight:600">'+esc(w.worker)+'</td><td style="padding:8px 10px">'+esc(w.machine)+'</td><td style="padding:8px 10px"><span style="padding:2px 8px;border-radius:6px;font-size:10px;font-weight:700;background:'+(done?'#E8F5EE':'var(--ac2)')+';color:'+(done?'#1B8C65':'var(--ac)')+'">'+esc(w.status)+'</span></td><td style="padding:8px 10px;text-align:right">'+(w.minutes?w.minutes+'分':'—')+'</td><td style="padding:8px 10px;text-align:right">'+(w.goodQty||'—')+'</td><td style="padding:8px 10px;text-align:right;color:'+(w.ngQty?'var(--rd)':'inherit')+'">'+(w.ngQty||'—')+'</td><td style="padding:8px 10px;color:var(--tx2)">'+esc(w.note)+'</td><td style="padding:8px 10px;color:var(--tx2)">'+esc(w.insight)+'</td><td style="padding:8px 10px"><button onclick="wlDelete(\''+w.id+'\')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:11px">削除</button></td></tr>';
+    });
+    h+='</tbody></table></div>';
+  }
   return h;
 }
 function scatterSVG(rows,target){
