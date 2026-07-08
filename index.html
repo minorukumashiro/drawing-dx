@@ -1041,6 +1041,7 @@ function exportAllData(){
     invoices:INVOICES,
     masters:MASTERS,
     worklogs:WORKLOGS,
+    deliveries:DELIVERIES,
     nextId:nextId,
     scannedImages:{},
     scannedPdfs:scannedPdfs,
@@ -1074,6 +1075,7 @@ function importAllData(event){
       DRAWINGS=data.drawings||[];
       INVOICES=data.invoices||[];
       WORKLOGS=data.worklogs||WORKLOGS;
+      DELIVERIES=data.deliveries||DELIVERIES;
       MASTERS=data.masters||JSON.parse(JSON.stringify(DEF_MASTERS));
       nextId=data.nextId||100;
       scannedPdfs=data.scannedPdfs||{};
@@ -1095,7 +1097,7 @@ function importAllData(event){
         updateSyncStatus('pushing');
         var _impPayload={
           drawings:DRAWINGS,masters:MASTERS,inspections:inspMeta(),relatedDocuments:relDocMeta(),
-          invoices:INVOICES,annotations:ANNOTATIONS,worklogs:WORKLOGS,nextId:nextId,
+          invoices:INVOICES,annotations:ANNOTATIONS,deliveries:DELIVERIES,worklogs:WORKLOGS,nextId:nextId,
           lastModified:firebase.firestore.FieldValue.serverTimestamp(),
           lastClient:fbClientId()
         };
@@ -1265,7 +1267,8 @@ function getPdfSrc(id){
 function simColor(v){return v>=80?"#1B8C65":v>=50?"#B06E15":"#888"}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}
 function isMobileDevice(){return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)||window.innerWidth<=768}
-var S={tab:'board',search:'',wbSearch:'',wbSearchInput:'',clientFilter:'',fcat:'すべて',minSim:0,sel:null,results:null,searching:false,detail:null,regOpen:false,regPrev:null,regName:'',regBlobUrl:null,regIsPdf:false,ocrSt:'idle',ocrF:{},invType:'見積書',invDrawing:null,invSearch:'',annoDrawing:null,annoSearch:'',annoPage:1,annoPageCount:0,annoTool:'pen',annoColor:'#C03030',annoStamps:[],annoQRs:[],annoTexts:[],annoLines:[],editOpen:false,editDwg:null,viewerId:null,bulkOpen:false,bulkItems:[],bulkSelected:0,verifyOpen:false,wlDate:new Date().toISOString().slice(0,10),wlRows:null,wlSaved:false,wlShowAll:false};
+function todayLocal(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+var S={tab:'board',search:'',wbSearch:'',wbSearchInput:'',clientFilter:'',fcat:'すべて',minSim:0,sel:null,results:null,searching:false,detail:null,regOpen:false,regPrev:null,regName:'',regBlobUrl:null,regIsPdf:false,ocrSt:'idle',ocrF:{},invType:'見積書',invDrawing:null,invSearch:'',annoDrawing:null,annoSearch:'',annoPage:1,annoPageCount:0,annoTool:'pen',annoColor:'#C03030',annoStamps:[],annoQRs:[],annoTexts:[],annoLines:[],editOpen:false,editDwg:null,viewerId:null,bulkOpen:false,bulkItems:[],bulkSelected:0,verifyOpen:false,wlDate:todayLocal(),wlRows:null,wlSaved:false,wlShowAll:false};
 try{var _bc=localStorage.getItem('dxp_boardCollapsed');if(_bc)S.boardCollapsed=JSON.parse(_bc);}catch(e){}
 
 function render(){
