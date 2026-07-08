@@ -2288,7 +2288,7 @@ function worklogHTML(){
     h+='<div class="f-field" style="margin-bottom:10px"><label>紐付ける図面<span style="font-weight:400;text-transform:none;color:var(--tx3)">・製造中のみ</span></label><select onchange="wlSetField(\''+row.id+'\',\'drawingId\',this.value?parseInt(this.value,10):\'\')"><option value="">（図面を選択）</option>'+DRAWINGS.filter(function(d){return d.status==='製造中'||d.id===row.drawingId}).map(function(d){return'<option value="'+d.id+'"'+(row.drawingId===d.id?' selected':'')+'>'+esc(d.number)+' '+esc(d.name)+' ('+esc(d.client||'—')+')</option>'}).join('')+'</select></div>';
     (function(){
       var wd=row.drawingId?DRAWINGS.find(function(x){return x.id===row.drawingId}):null;
-      if(wd&&!(isMobileDevice()&&done)){
+      if(wd&&!isMobileDevice()){
         h+='<div class="f-row" style="grid-template-columns:1fr 1fr;margin-bottom:10px">';
         h+='<div class="f-field"><label>製造時間（分/個）<span style="font-weight:400;text-transform:none;color:var(--tx3)">・全端末で共有</span></label><input type="number" step="0.1" min="0" value="'+esc(String(wd.mfgMin||''))+'" onwheel="this.blur()" onchange="wlSetMfgMin('+wd.id+',this.value)" placeholder="例: 45"></div>';
         h+='<div class="f-field"><label>時間あたり付加価値（自動計算）</label><input value="'+(wd.mfgMin&&wd.price?('¥'+Math.round(wd.price*60/wd.mfgMin).toLocaleString()+' /h'):'—')+'" readonly style="background:var(--bg2);color:var(--tx2)"></div>';
