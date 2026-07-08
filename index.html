@@ -2217,7 +2217,7 @@ function worklogHTML(){
     var done=row.status==='完了';
     h+='<div style="position:relative;background:var(--bg);border:1px solid '+(done?'var(--gn)':'var(--bd)')+';border-radius:var(--r);padding:16px;box-shadow:var(--shadow)">';
     h+='<button onclick="wlRemoveRow(\''+row.id+'\')" title="削除" style="position:absolute;top:10px;right:10px;background:none;border:none;color:var(--tx3);font-size:16px;cursor:pointer;line-height:1">&times;</button>';
-    h+='<div class="f-field" style="margin-bottom:10px"><label>紐付ける図面</label><select onchange="wlSetField(\''+row.id+'\',\'drawingId\',this.value?parseInt(this.value,10):\'\')"><option value="">（図面を選択）</option>'+DRAWINGS.map(function(d){return'<option value="'+d.id+'"'+(row.drawingId===d.id?' selected':'')+'>'+esc(d.number)+' '+esc(d.name)+' ('+esc(d.client||'—')+')</option>'}).join('')+'</select></div>';
+    h+='<div class="f-field" style="margin-bottom:10px"><label>紐付ける図面<span style="font-weight:400;text-transform:none;color:var(--tx3)">・製造中のみ</span></label><select onchange="wlSetField(\''+row.id+'\',\'drawingId\',this.value?parseInt(this.value,10):\'\')"><option value="">（図面を選択）</option>'+DRAWINGS.filter(function(d){return d.status==='製造中'||d.id===row.drawingId}).map(function(d){return'<option value="'+d.id+'"'+(row.drawingId===d.id?' selected':'')+'>'+esc(d.number)+' '+esc(d.name)+' ('+esc(d.client||'—')+')</option>'}).join('')+'</select></div>';
     (function(){
       var wd=row.drawingId?DRAWINGS.find(function(x){return x.id===row.drawingId}):null;
       if(wd){
