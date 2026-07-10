@@ -1,0 +1,56 @@
+' ============================================================
+' 図面DXプラットフォーム メール添付 自動保存マクロ
+' Outlook の VBAエディタで「ThisOutlookSession」に貼り付けて使う。
+' 受信トレイに新着メールが届くたびに、対象拡張子の添付ファイルだけを
+' 監視フォルダ(mail-fax-watcher が定期的に読みに来るフォルダ)へ保存する。
+'
+' 受信トレイ以外（迷惑メールフォルダ等）に振り分けられたメールは対象外。
+' ============================================================
+
+Private Sub Application_NewMailEx(ByVal EntryIDCollection As String)
+    Dim arrIDs() As String
+    Dim ns As Outlook.NameSpace
+    Dim itm As Object
+    Dim mailItem As Outlook.MailItem
+    Dim atmt As Outlook.Attachment
+    Dim saveFolder As String
+    Dim inboxFolder As Outlook.Folder
+    Dim i As Long
+    Dim ext As String
+    Dim fname As String
+
+    ' ↓ mail-fax-watcher の config.json の sources.mailInboxFolder と必ず同じパスにする
+    saveFolder = "C:\DrawingWatch\mail-inbox\"
+
+    Set ns = Application.GetNamespace("MAPI")
+    Set inboxFolder = ns.GetDefaultFolder(olFolderInbox)
+
+    arrIDs = Split(EntryIDCollection, ",")
+
+    For i = LBound(arrIDs) To UBound(arrIDs)
+        On Error Resume Next
+        Set itm = ns.GetItemFromID(arrIDs(i))
+        On Error GoTo 0
+
+        If Not itm Is Nothing Then
+            If TypeOf itm Is Outlook.MailItem Then
+                Set mailItem = itm
+                ' 受信トレイに届いたメールのみ対象（迷惑メールフォルダ等は仕分けの時点で除外される）
+                If mailItem.Parent.EntryID = inboxFolder.EntryID Then
+                    For Each atmt In mailItem.Attachments
+                        ext = LCase(Right(atmt.FileName, 4))
+                        If ext = ".pdf" Or ext = ".png" Or ext = ".jpg" _
+                           Or LCase(Right(atmt.FileName, 5)) = ".jpeg" Then
+                            ' ファイル名衝突防止に受信時刻をプレフィックスとして付ける
+                            fname = Format(Now, "yyyymmdd_hhnnss") & "_" & atmt.FileName
+                            On Error Resume Next
+                            atmt.SaveAsFile saveFolder & fname
+                            On Error GoTo 0
+                        End If
+                    Next atmt
+                End If
+            End If
+        End If
+        Set itm = Nothing
+    Next i
+End Sub

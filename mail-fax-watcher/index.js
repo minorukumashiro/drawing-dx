@@ -1,0 +1,212 @@
+// 図面DXプラットフォーム — メール添付・FAX受信 自動取込ウォッチャー
+// Windows タスクスケジューラから定期的に (`node index.js`) 起動される想定。
+// 1回の起動で「取り込むべき新着ファイルがあるか」を確認し、あれば処理して終了する。
+// 平日日中/平日夜間/休日(祝日)での巡回間隔の切り替えは本スクリプト内で自己判定する
+// （タスクスケジューラ側は常に短い間隔で起動してよい）。
+const fs = require('fs');
+const path = require('path');
+
+const state = require('./lib/state');
+const { requiredIntervalMinutes } = require('./lib/holidays');
+const { listCandidates, dedupKey } = require('./lib/scanFolder');
+const { detectNonDrawingDoc } = require('./lib/detectNonDrawing');
+const fbSync = require('./lib/firestoreSync');
+
+const CONFIG_PATH = path.join(__dirname, 'config.json');
+const PROCESSED_DIR_NAME = 'processed';
+
+function loadConfig() {
+  if (!fs.existsSync(CONFIG_PATH)) {
+    console.error(
+      `config.json が見つかりません: ${CONFIG_PATH}\n` +
+      'config.example.json をコピーして config.json を作成し、環境に合わせて編集してください。'
+    );
+    process.exit(1);
+  }
+  return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+}
+
+function log(...args) {
+  console.log(`[${new Date().toISOString()}]`, ...args);
+}
+
+function guessDrawingNumber(fileName) {
+  const m = fileName.match(/(DWG[-_]?\d+|図番\s*[:：]?\s*([\w\-]+)|[A-Z]{1,3}\d{3,})/i);
+  if (!m) return '';
+  return m[0].replace(/図番\s*[:：]?\s*/, '');
+}
+
+function mailDisplayName(fileName) {
+  // ウォッチフォルダ保存時に付与される "yyyymmdd_hhnnss_" 衝突防止プレフィックスを表示名からは除く
+  const stripped = fileName.replace(/^\d{8}_\d{6}_/, '');
+  return stripped.replace(/\.[^.]+$/, '');
+}
+
+// FAXファイル名 "<送信元番号>_<YYYYMMDD>_<HHMMSS>.pdf" から表示名と日付を推測する
+function faxNameAndDate(fileName) {
+  const m = fileName.match(/^(\d+)_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/);
+  if (!m) return { name: fileName.replace(/\.[^.]+$/, ''), date: todayJst() };
+  const [, faxNo, y, mo, d, hh, mm] = m;
+  return {
+    name: `FAX受信 (${faxNo}) ${y}-${mo}-${d} ${hh}:${mm}`,
+    date: `${y}-${mo}-${d}`
+  };
+}
+
+function todayJst() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function buildDrawingMeta(id, item) {
+  const isFax = item.source === 'fax';
+  let name, date;
+  if (isFax) {
+    ({ name, date } = faxNameAndDate(item.fileName));
+  } else {
+    name = mailDisplayName(item.fileName) || item.fileName;
+    date = todayJst();
+  }
+  const number = isFax ? '' : guessDrawingNumber(item.fileName);
+  const tags = [isFax ? 'FAX取込' : 'メール取込'];
+  if (item.oversized) tags.push('サイズ超過:元ファイル要確認');
+
+  return {
+    id,
+    number: number || ('DWG-' + String(id).padStart(4, '0')),
+    name,
+    cat: '未指定',
+    mat: '未指定',
+    size: '未指定',
+    client: '未指定',
+    price: 0,
+    date,
+    tags,
+    shape: 'plate',
+    status: '待機',
+    priority: '中',
+    scanned: true,
+    imgVer: Date.now()
+  };
+}
+
+async function processOne(db, item, cfg) {
+  const id = await fbSync.reserveIds(db, 1);
+  const { doc, oversized } = await fbSync.buildImageDoc(item.filePath, item.ext, cfg.maxImageBytes);
+  await fbSync.uploadImageDoc(db, id, doc);
+  item.oversized = oversized;
+  const meta = buildDrawingMeta(id, item);
+  await fbSync.appendDrawings(db, [meta]);
+
+  // ブラウザ側の全体上書き同期(1.5秒デバウンス+3秒エコー抑制)との競合で
+  // 追加した図面が消されていないかを少し待ってから確認する。
+  await new Promise((r) => setTimeout(r, cfg.verifyDelaySeconds * 1000));
+  let present = await fbSync.fetchPresentIds(db, [id]);
+  if (present.length === 0) {
+    log(`⚠ id=${id} (${item.fileName}) が同期直後に消えていたため再登録します`);
+    await fbSync.appendDrawings(db, [meta]);
+    await new Promise((r) => setTimeout(r, cfg.verifyDelaySeconds * 1000));
+    present = await fbSync.fetchPresentIds(db, [id]);
+  }
+  return { id, verified: present.length > 0, meta };
+}
+
+function ensureDir(p) {
+  if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+}
+
+async function main() {
+  const cfg = loadConfig();
+  const st = state.load();
+  const now = new Date();
+
+  if (st.lastRun) {
+    const elapsedMin = (now - new Date(st.lastRun)) / 60000;
+    const needMin = requiredIntervalMinutes(now, cfg);
+    if (elapsedMin < needMin) {
+      log(`巡回間隔未到達のためスキップ (前回から${elapsedMin.toFixed(1)}分 / 必要間隔${needMin}分)`);
+      return;
+    }
+  }
+
+  log('取込チェック開始');
+
+  const mailItems = listCandidates(cfg.sources.mailInboxFolder, 'mail', PROCESSED_DIR_NAME);
+  const faxItems = listCandidates(cfg.sources.faxFolder, 'fax', PROCESSED_DIR_NAME);
+
+  // FAX共有フォルダには導入以前からの大量の過去ファイルが蓄積されているため、
+  // 初回実行時はそれらを「待機」へ一括登録せず、既存分をベースラインとして記録するだけにする。
+  // 以降の実行では、このベースライン以降に現れた新着FAXのみが取込対象になる。
+  if (!st.faxBaselineSeeded) {
+    for (const item of faxItems) {
+      const key = dedupKey(item);
+      if (!st.processed[key]) st.processed[key] = { baseline: true, at: now.toISOString() };
+    }
+    st.faxBaselineSeeded = true;
+    log(`FAX共有フォルダの既存ファイル ${faxItems.length} 件をベースラインとして記録しました（今回は取り込まず、次回以降の新着分のみ取り込みます）`);
+    state.save(st);
+  }
+
+  const allItems = mailItems.concat(faxItems);
+
+  const allowed = new Set(cfg.allowedExtensions.map((e) => e.toLowerCase()));
+  const candidates = [];
+  for (const item of allItems) {
+    if (!allowed.has(item.ext)) continue;
+    const key = dedupKey(item);
+    if (st.processed[key]) continue; // 処理済み
+    if (cfg.excludeNonDrawingDocsByFilename) {
+      const kind = detectNonDrawingDoc(item.fileName);
+      if (kind) {
+        log(`除外(${kind}と判定): ${item.fileName}`);
+        st.processed[key] = { skipped: kind, at: now.toISOString() };
+        continue;
+      }
+    }
+    candidates.push({ item, key });
+  }
+
+  if (candidates.length === 0) {
+    log('新規ファイルなし');
+    st.lastRun = now.toISOString();
+    state.save(st);
+    return;
+  }
+
+  log(`新規ファイル ${candidates.length} 件を処理します`);
+  const db = fbSync.initFirestore(cfg.firebase.serviceAccountKeyPath);
+
+  ensureDir(path.join(cfg.sources.mailInboxFolder, PROCESSED_DIR_NAME));
+
+  let okCount = 0, ngCount = 0;
+  for (const { item, key } of candidates) {
+    try {
+      const result = await processOne(db, item, cfg);
+      if (result.verified) {
+        st.processed[key] = { drawingId: result.id, at: now.toISOString() };
+        if (item.source === 'mail') {
+          const dest = path.join(cfg.sources.mailInboxFolder, PROCESSED_DIR_NAME, item.fileName);
+          try { fs.renameSync(item.filePath, dest); } catch (e) { log(`移動失敗(無視): ${item.fileName} - ${e.message}`); }
+        }
+        // FAXは共有フォルダ側のファイルには触れない（stateで処理済み管理のみ）
+        log(`✓ 登録完了 id=${result.id} [${item.source}] ${item.fileName} -> ${result.meta.name}`);
+        okCount++;
+      } else {
+        log(`✗ 未確定のため次回再試行: ${item.fileName} (id=${result.id})`);
+        ngCount++;
+      }
+    } catch (e) {
+      log(`✗ 処理失敗: ${item.fileName} - ${e.message}`);
+      ngCount++;
+    }
+    state.save(st); // 1件ごとに保存し、途中失敗しても進捗を失わない
+  }
+
+  st.lastRun = now.toISOString();
+  state.save(st);
+  log(`完了: 成功${okCount}件 / 失敗・再試行待ち${ngCount}件`);
+}
+
+main().catch((e) => {
+  console.error('致命的エラー:', e);
+  process.exit(1);
+});

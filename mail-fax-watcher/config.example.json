@@ -1,0 +1,18 @@
+{
+  "firebase": {
+    "serviceAccountKeyPath": "./serviceAccountKey.json"
+  },
+  "sources": {
+    "mailInboxFolder": "C:\\DrawingWatch\\mail-inbox",
+    "faxFolder": "\\\\192.168.100.232\\fax"
+  },
+  "allowedExtensions": [".pdf", ".png", ".jpg", ".jpeg"],
+  "excludeNonDrawingDocsByFilename": false,
+  "maxImageBytes": 972800,
+  "weekdayIntervalMinutes": 30,
+  "nightIntervalMinutes": 360,
+  "nightStartHour": 20,
+  "nightEndHour": 8,
+  "weekendHolidayIntervalMinutes": 360,
+  "verifyDelaySeconds": 8
+}

@@ -1,0 +1,22 @@
+{
+  "name": "mail-fax-watcher",
+  "version": "1.0.0",
+  "description": "メール添付・FAX受信を図面DXプラットフォームに「待機」として自動取込するローカルウォッチャー",
+  "main": "index.js",
+  "directories": {
+    "lib": "lib"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "firebase-admin": "^14.1.0",
+    "japanese-holidays": "^1.0.10",
+    "sharp": "^0.35.3"
+  }
+}

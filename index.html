@@ -1255,6 +1255,10 @@ function thumb(d,sz){
     var mh=sz||56;
     return '<img data-scanimg="'+d.id+'" style="max-width:100%;max-height:'+mh+'px;object-fit:contain;border-radius:4px;display:block">';
   }
+  // 生PDFデータはあるがサムネイル未生成（メール/FAX自動取込のPDF等）— PDFから1ページ目を遅延レンダリングする
+  if(typeof scannedPdfs[d.id]==='string'){
+    return '<div data-pdfrender="'+d.id+'" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:'+(sz||56)+'px"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#C03030" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span style="font-size:9px;color:#C03030">読込中...</span></div>';
+  }
   if(d.scanned) return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:'+(sz||56)+'px;color:var(--rd);font-size:10px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>画像なし</div>';
   return shapeSVG(d.shape,sz);
 }
@@ -1569,7 +1573,7 @@ function render(){
 
   // DETAIL
   if(S.detail){var d=S.detail;
-    var hasImg=!!(pdfThumbnails[d.id]||scannedImages[d.id]||scannedBlobUrls[d.id]);
+    var hasImg=!!(pdfThumbnails[d.id]||scannedImages[d.id]||scannedBlobUrls[d.id]||typeof scannedPdfs[d.id]==='string');
     var fileInfo=d.scanned?(scannedPdfs[d.id]?'PDF':'画像')+(hasImg?'':'（データなし）'):'未登録';
     h+='<div class="side-bg"><div class="side-dim" onclick="closeDetail()"></div><div class="side"><div style="display:flex;justify-content:space-between"><div><div class="num" style="font-size:11px;color:var(--tx3)">'+d.number+(d.scanned?' <span class="badge badge-scan">スキャン</span>':'')+'</div><h2>'+d.name+'</h2></div><button class="close-btn" onclick="closeDetail()">&times;</button></div>'
     +'<div class="side-thumb" style="cursor:'+(hasImg?'pointer':'default')+';position:relative" onclick="'+(hasImg?(_mobile?'closeDetail();openMobileViewer('+d.id+')':'downloadDrawingFile('+d.id+')'):'')+'">'
@@ -1651,15 +1655,11 @@ function render(){
     h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px">';
     var sorted=DRAWINGS.slice().sort(function(a,b){return a.client.localeCompare(b.client,'ja')||a.number.localeCompare(b.number,'ja')});
     sorted.forEach(function(d){
-      var hasImg=!!(pdfThumbnails[d.id]||scannedImages[d.id]||scannedBlobUrls[d.id]);
       var stColor=stC2[d.status]||'#86868b';
       h+='<div style="border:1px solid var(--bd);border-radius:8px;background:var(--bg);overflow:hidden;display:flex;flex-direction:column">';
       h+='<div style="height:160px;background:#f5f5f7;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative">';
-      if(hasImg){
-        h+='<img data-scanimg="'+d.id+'" style="max-width:100%;max-height:160px;object-fit:contain">';
-      }else{
-        h+='<div style="font-size:11px;color:#999;text-align:center">画像なし</div>';
-      }
+      // thumb() 経由にすることで、生PDFのみの図面もサムネイルを遅延生成して表示する
+      h+=thumb(d,160);
       h+='<span style="position:absolute;top:4px;left:4px;background:'+stColor+';color:#fff;font-size:9px;font-weight:700;padding:2px 6px;border-radius:8px">'+esc(d.status)+'</span>';
       h+='</div>';
       h+='<div style="padding:8px 10px;flex:1;display:flex;flex-direction:column;gap:3px">';
@@ -1803,8 +1803,10 @@ function inject(){setTimeout(function(){
   // Lazy-render PDF thumbnails
   document.querySelectorAll('[data-pdfrender]').forEach(function(el){
     var id=+el.getAttribute('data-pdfrender');
-    if(!scannedImages[id])return;
-    renderPdfThumbnail(id,scannedImages[id],function(thumbUrl){
+    // scannedImages（旧形式でPDFデータが入る場合）優先、無ければ生PDF（scannedPdfs）から描画
+    var pdfSrc=scannedImages[id]||(typeof scannedPdfs[id]==='string'?scannedPdfs[id]:null);
+    if(!pdfSrc)return;
+    renderPdfThumbnail(id,pdfSrc,function(thumbUrl){
       if(thumbUrl){
         pdfThumbnails[id]=thumbUrl;
         saveAll();
