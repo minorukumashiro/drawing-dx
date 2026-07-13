@@ -3591,15 +3591,32 @@ function downloadDrawingFile(id){
   }
 }
 
-function compressImage(dataUrl,cb){
+function compressImage(dataUrl,cb,targetBytes){
+  // データURL(base64)長が target 未満に収まるまで段階的に縮小・低画質化する。
+  // Firestore 1ドキュメント1MB制限に対し、既定950KBで余裕を持たせる。
+  var target=targetBytes||950*1024;
   var img=new Image();
   img.onload=function(){
-    var max=1200,w=img.width,h=img.height;
-    if(w>max||h>max){if(w>h){h=Math.round(h*max/w);w=max;}else{w=Math.round(w*max/h);h=max;}}
-    var c=document.createElement('canvas');c.width=w;c.height=h;
-    c.getContext('2d').drawImage(img,0,0,w,h);
-    cb(c.toDataURL('image/jpeg',0.82));
+    // 1回目は従来と同じ(長辺1200px/画質0.82)。以降は収まるまで段階的に圧縮を強める。
+    var attempts=[
+      {max:1200,q:0.82},{max:1200,q:0.72},{max:1000,q:0.7},{max:900,q:0.66},
+      {max:800,q:0.62},{max:700,q:0.58},{max:600,q:0.52},{max:500,q:0.48}
+    ];
+    function renderAt(a){
+      var w=img.width,h=img.height,max=a.max;
+      if(w>max||h>max){if(w>h){h=Math.round(h*max/w);w=max;}else{w=Math.round(w*max/h);h=max;}}
+      var c=document.createElement('canvas');c.width=w;c.height=h;
+      var ctx=c.getContext('2d');
+      ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h); // JPEGは透過非対応のため白地で塗る
+      ctx.drawImage(img,0,0,w,h);
+      return c.toDataURL('image/jpeg',a.q);
+    }
+    for(var i=0;i<attempts.length;i++){
+      var out=renderAt(attempts[i]);
+      if(out.length<target||i===attempts.length-1){cb(out);return;}
+    }
   };
+  img.onerror=function(){cb(dataUrl);}; // 読み込み失敗時は元データをそのまま返す
   img.src=dataUrl;
 }
 function fbLoadInspectionFiles(){
@@ -3655,7 +3672,7 @@ function uploadInspection(drawingId){
         // Firestoreサブコレクションにファイルデータを保存（メイン文書は軽量に保つ）
         if(fbEnabled){
           fbDB.collection('workspaces').doc('insp_'+fileId).set({drawingId:drawingId,name:f.name,date:report.date,type:f.type,data:data})
-            .catch(function(err){console.warn('inspection file save failed:',err.message);});
+            .catch(function(err){console.warn('inspection file save failed:',err.message);alert('検査報告書のクラウド同期に失敗しました（約'+Math.round(data.length/1024)+'KB）。\nこの端末には保存されていますが、他の端末では表示されない場合があります。\n通信状態を確認し、必要なら削除して撮り直し・再アップロードしてください。');});
         }
         saveAll();render();
       }
@@ -3749,7 +3766,7 @@ function uploadRelatedDoc(drawingId){
         relatedDocuments[drawingId].push(doc);
         if(fbEnabled){
           fbDB.collection('workspaces').doc('rdoc_'+fileId).set({drawingId:drawingId,name:f.name,date:doc.date,type:f.type,data:data})
-            .catch(function(err){console.warn('rdoc file save failed:',err.message);});
+            .catch(function(err){console.warn('rdoc file save failed:',err.message);alert('関連書類のクラウド同期に失敗しました（約'+Math.round(data.length/1024)+'KB）。\nこの端末には保存されていますが、他の端末では表示されない場合があります。\n通信状態を確認し、必要なら削除して撮り直し・再アップロードしてください。');});
         }
         saveAll();render();
       }
