@@ -68,6 +68,11 @@ Copy-Item config.example.json config.json
 - `sources.faxFolder` : FAX共有フォルダ（既定で `\\192.168.100.232\fax` を設定済み）
 - `excludeNonDrawingDocsByFilename` : `false`（既定）。ユーザー方針「除外に迷ったら入れる」に合わせ、
   注文書/納品書/見積書のファイル名判定による自動除外は無効にしています。有効にしたい場合は `true` に変更してください。
+- `skipNonWorkImages` : `true`（既定）。メール署名のロゴ・アイコン等「仕事に不要な小さい画像」を取り込まない。
+  判定は**画素サイズ**が主で、`minImageDimension`（既定500px）未満の画像を署名/ロゴとみなして除外する
+  （図面は写真・スキャン・本文貼付でも必ず大きい画素数になるため。バイトサイズでは判定しない＝線画の図面を
+  誤除外しないため）。除外したメール画像は `mail-inbox\skipped\` に退避され、後から確認・救済できる。
+  寸法が読めない画像だけ `minImageBytes`（既定50KB）未満を除外の代替判定に使う。PDFはこの対象外。
 - `weekdayIntervalMinutes` / `nightIntervalMinutes` / `weekendHolidayIntervalMinutes` :
   平日日中30分・平日夜間6時間・土日祝6時間（既定のままでOK）
 - `nightStartHour` / `nightEndHour` : 夜間とみなす時間帯（既定 20時〜翌8時）

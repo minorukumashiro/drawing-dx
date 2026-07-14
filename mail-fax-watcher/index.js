@@ -10,10 +10,13 @@ const state = require('./lib/state');
 const { requiredIntervalMinutes } = require('./lib/holidays');
 const { listCandidates, dedupKey } = require('./lib/scanFolder');
 const { detectNonDrawingDoc } = require('./lib/detectNonDrawing');
+const { classifyNonWorkImage } = require('./lib/junkImage');
 const fbSync = require('./lib/firestoreSync');
 
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const PROCESSED_DIR_NAME = 'processed';
+const SKIPPED_DIR_NAME = 'skipped';
+const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg']);
 
 function loadConfig() {
   if (!fs.existsSync(CONFIG_PATH)) {
@@ -162,8 +165,24 @@ async function main() {
         continue;
       }
     }
+    // メール署名のロゴ・アイコン等「仕事に不要な小さい画像」を除外（サイズで判定）
+    if (cfg.skipNonWorkImages !== false && IMAGE_EXTS.has(item.ext)) {
+      const cls = await classifyNonWorkImage(item.filePath, item.fileName, item.size, cfg);
+      if (cls.skip) {
+        log(`除外(${cls.reason}): ${item.fileName}`);
+        st.processed[key] = { skippedNonWork: cls.reason, at: now.toISOString() };
+        // 誤判定時に後から確認・救済できるよう、除外したメール画像は skipped フォルダへ退避する
+        if (item.source === 'mail') {
+          const skDir = path.join(cfg.sources.mailInboxFolder, SKIPPED_DIR_NAME);
+          ensureDir(skDir);
+          try { fs.renameSync(item.filePath, path.join(skDir, item.fileName)); } catch (e) { log(`退避失敗(無視): ${item.fileName} - ${e.message}`); }
+        }
+        continue;
+      }
+    }
     candidates.push({ item, key });
   }
+  state.save(st); // 上のループで付けた除外マークを確定保存
 
   if (candidates.length === 0) {
     log('新規ファイルなし');
