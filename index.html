@@ -1326,6 +1326,24 @@ function render(){
     var monthCount=Object.keys(byDay).reduce(function(s,k){return s+byDay[k].length},0);
     var monthTotal=Object.keys(byDay).reduce(function(s,k){return s+byDay[k].reduce(function(s2,e){var q=Number(e.qty)||0,p=Number(e.price)||0;return s2+q*p;},0);},0);
     h+='<div class="section-title">納品カレンダー</div>';
+    // 検索ボックス（PC・スマホ共通）
+    h+='<div style="margin-bottom:14px"><input id="delSearchBox" type="text" value="'+esc(S.delSearch||'')+'" placeholder="図番・品名・取引先で検索（全期間）" style="width:100%;padding:9px 12px;border:1px solid var(--bd);border-radius:8px;font-size:13px;background:var(--bg);color:var(--tx);box-sizing:border-box"></div>';
+    var _delQ=(S.delSearch||'').trim().toLowerCase();
+    if(_delQ){
+      // ===== 検索結果（全期間から絞り込み） =====
+      var _terms=_delQ.split(/\s+/);
+      var _matches=DELIVERIES.filter(function(e){var hay=((e.number||'')+' '+(e.name||'')+' '+(e.client||'')+' '+(e.size||'')+' '+(e.date||'')).toLowerCase();return _terms.every(function(t){return hay.indexOf(t)>=0;});}).sort(function(a,b){return String(b.date||'').localeCompare(String(a.date||''));});
+      h+='<div style="font-size:12px;color:var(--tx3);margin-bottom:10px">検索結果 '+_matches.length+' 件<span style="margin-left:10px;color:var(--ac);cursor:pointer" onclick="delClearSearch()">✕ クリア</span></div>';
+      if(!_matches.length){
+        h+='<div style="text-align:center;color:var(--tx3);font-size:13px;padding:30px 20px;background:var(--bg);border:1px dashed var(--bd);border-radius:var(--r)">該当する納品データがありません</div>';
+      }else{
+        _matches.forEach(function(e){
+          var td=deliveryThumbData(e.drawingId);
+          var img=td?'<img src="'+td+'" style="width:52px;height:52px;object-fit:contain;background:#fff;border-radius:6px;flex-shrink:0">':'<div style="width:52px;height:52px;background:var(--bg2);border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--tx3)">図</div>';
+          h+='<div onclick="openDeliveryEntry('+e.id+')" style="display:flex;gap:10px;align-items:center;background:var(--bg);border:1px solid var(--bd);border-left:3px solid #1B8C65;border-radius:10px;padding:10px;margin-bottom:8px;cursor:pointer;box-shadow:var(--shadow)">'+img+'<div style="min-width:0;flex:1"><div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(e.number||'')+'</div><div style="font-size:11px;color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(e.name||'')+'</div><div style="font-size:11px;color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(e.client||'')+'</div></div><div style="text-align:right;flex-shrink:0"><div style="font-size:11px;color:var(--tx2);margin-bottom:2px">'+esc(e.date||'')+'</div><div style="font-size:12px;font-weight:700;color:#1B8C65">'+(e.qty?esc(String(e.qty))+'個':'')+'</div><div style="font-size:11px;color:var(--tx2)">'+(e.price?'¥'+Number(e.price).toLocaleString():'')+'</div></div></div>';
+        });
+      }
+    }else{
     h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">';
     h+='<button onclick="calNav(-1)" style="padding:8px 14px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--tx);font-size:13px;cursor:pointer">‹ 前月</button>';
     h+='<div style="font-size:18px;font-weight:700;min-width:'+(_mobile?'110px':'150px')+';text-align:center">'+cy+'年 '+(cm+1)+'月</div>';
@@ -1398,6 +1416,7 @@ function render(){
       h+='</div>';
       if(monthCount===0)h+='<div style="text-align:center;color:var(--tx3);font-size:13px;padding:20px">この月の納品はまだありません。図面を【納品済】に変更すると転記確認が表示されます。</div>';
     }
+    } // end 検索結果 / 通常カレンダー 分岐
   }
 
   // SEARCH
@@ -1782,6 +1801,15 @@ function render(){
     asb.addEventListener('compositionend',function(e){acomp=false;S.annoSearch=e.target.value;render()});
     asb.addEventListener('input',function(e){if(!acomp&&!e.isComposing){S.annoSearch=e.target.value;render()}});
     if(S.annoSearch){asb.focus();asb.setSelectionRange(S.annoSearch.length,S.annoSearch.length)}
+  }
+  // IME-aware search input (納品カレンダー)
+  var dsb=document.getElementById('delSearchBox');
+  if(dsb){
+    var dcomp=false;
+    dsb.addEventListener('compositionstart',function(){dcomp=true});
+    dsb.addEventListener('compositionend',function(e){dcomp=false;S.delSearch=e.target.value;render()});
+    dsb.addEventListener('input',function(e){if(!dcomp&&!e.isComposing){S.delSearch=e.target.value;render()}});
+    if(S.delSearch){dsb.focus();dsb.setSelectionRange(S.delSearch.length,S.delSearch.length)}
   }
   if(S.tab==='annotate'&&S.annoDrawing)initCV();
 }
@@ -2388,6 +2416,8 @@ function closeDetail(){S.detail=null;render()}
 function changeStatus(id,newStatus){var d=DRAWINGS.find(function(x){return x.id===id});if(!d)return;var prev=d.status;d.status=newStatus;if(newStatus==='納品済')d.lastAccess=new Date().toISOString().slice(0,10);markStatusEdit(id,d.status,d.lastAccess);if(S.detail&&S.detail.id===id){S.detail.status=newStatus;if(newStatus==='納品済')S.detail.lastAccess=d.lastAccess;}saveAll(true);if(newStatus==='納品済'&&prev!=='納品済'){openTranscribe(id);}else{render();}}
 
 // ===== 納品カレンダー =====
+// 検索クリア
+function delClearSearch(){S.delSearch='';render();}
 // 図面のサムネイル(dataURL)を取得。なければ空文字。
 function deliveryThumbData(drawingId){
   if(pdfThumbnails&&pdfThumbnails[drawingId]&&typeof pdfThumbnails[drawingId]==='string')return pdfThumbnails[drawingId];
