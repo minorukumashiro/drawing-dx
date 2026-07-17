@@ -1337,7 +1337,7 @@ function render(){
     // 月間サマリー
     h+='<div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">';
     h+='<div style="flex:1;min-width:130px;background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:12px 16px;box-shadow:var(--shadow)"><div style="font-size:10px;color:var(--tx3);font-weight:500">当月納品件数</div><div style="font-size:20px;font-weight:700;color:#1B8C65">'+monthCount+'<small style="font-size:11px;font-weight:400;color:var(--tx3)"> 件</small></div></div>';
-    h+='<div style="flex:1;min-width:130px;background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:12px 16px;box-shadow:var(--shadow)"><div style="font-size:10px;color:var(--tx3);font-weight:500">当月納品金額（数量×単価）</div><div style="font-size:20px;font-weight:700">¥'+monthTotal.toLocaleString()+'</div></div>';
+    if(!_mobile)h+='<div style="flex:1;min-width:130px;background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:12px 16px;box-shadow:var(--shadow)"><div style="font-size:10px;color:var(--tx3);font-weight:500">当月納品金額（数量×単価）</div><div style="font-size:20px;font-weight:700">¥'+monthTotal.toLocaleString()+'</div></div>';
     h+='</div>';
     // 未転記の納品済（折りたたみ式・スマホは初期折りたたみ）
     var _untrans=DRAWINGS.filter(function(d){return d.status==='納品済'&&!DELIVERIES.some(function(e){return e.drawingId===d.id;});});
