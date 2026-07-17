@@ -117,6 +117,16 @@ function ensureDir(p) {
   if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
 }
 
+// 実行結果を Firestore の watcher_health に記録する（失敗しても本処理には影響させない）
+async function reportHealth(cfg, payload) {
+  try {
+    const db = fbSync.initFirestore(cfg.firebase.serviceAccountKeyPath);
+    await fbSync.writeHealth(db, payload);
+  } catch (e) {
+    log(`health書き込み失敗(無視): ${e.message}`);
+  }
+}
+
 async function main() {
   const cfg = loadConfig();
   const st = state.load();
@@ -132,6 +142,12 @@ async function main() {
   }
 
   log('取込チェック開始');
+
+  // 監視フォルダの到達性（Outlook保存先・FAX共有の切断検知用。healthに記録しアプリ側で警告表示）
+  const mailFolderOk = fs.existsSync(cfg.sources.mailInboxFolder);
+  const faxFolderOk = fs.existsSync(cfg.sources.faxFolder);
+  if (!mailFolderOk) log(`⚠ メール監視フォルダに到達できません: ${cfg.sources.mailInboxFolder}`);
+  if (!faxFolderOk) log(`⚠ FAX共有フォルダに到達できません: ${cfg.sources.faxFolder}`);
 
   const mailItems = listCandidates(cfg.sources.mailInboxFolder, 'mail', PROCESSED_DIR_NAME);
   const faxItems = listCandidates(cfg.sources.faxFolder, 'fax', PROCESSED_DIR_NAME);
@@ -188,6 +204,7 @@ async function main() {
     log('新規ファイルなし');
     st.lastRun = now.toISOString();
     state.save(st);
+    await reportHealth(cfg, { lastRunAt: now.toISOString(), lastSuccessAt: now.toISOString(), okCount: 0, ngCount: 0, lastError: null, mailFolderOk: mailFolderOk, faxFolderOk: faxFolderOk });
     return;
   }
 
@@ -223,9 +240,16 @@ async function main() {
   st.lastRun = now.toISOString();
   state.save(st);
   log(`完了: 成功${okCount}件 / 失敗・再試行待ち${ngCount}件`);
+  await reportHealth(cfg, { lastRunAt: now.toISOString(), lastSuccessAt: now.toISOString(), okCount: okCount, ngCount: ngCount, lastError: null, mailFolderOk: mailFolderOk, faxFolderOk: faxFolderOk });
 }
 
-main().catch((e) => {
+main().catch(async (e) => {
   console.error('致命的エラー:', e);
+  // 異常終了もFirestoreに記録し、アプリ側で「自動取込エラー」バナーを出せるようにする
+  // （lastSuccessAtはmergeで保持されるため、ここではlastRunAtとlastErrorのみ更新）
+  try {
+    const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+    await reportHealth(cfg, { lastRunAt: new Date().toISOString(), lastError: String(e && e.message || e) });
+  } catch (e2) { /* 設定すら読めない場合は諦める（run.logには残る） */ }
   process.exit(1);
 });

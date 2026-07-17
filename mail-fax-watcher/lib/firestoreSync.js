@@ -167,6 +167,11 @@ async function fetchPresentIds(db, ids) {
   return ids.filter((id) => present.has(id));
 }
 
+// ウォッチャーの死活・実行結果を workspaces/watcher_health に記録する（アプリ側が読んで異常バナーを出す）
+async function writeHealth(db, payload) {
+  await db.collection('workspaces').doc('watcher_health').set(payload, { merge: true });
+}
+
 module.exports = {
   initFirestore,
   mimeForExt,
@@ -174,5 +179,6 @@ module.exports = {
   uploadImageDoc,
   reserveIds,
   appendDrawings,
-  fetchPresentIds
+  fetchPresentIds,
+  writeHealth
 };
