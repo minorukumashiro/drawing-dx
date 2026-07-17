@@ -1127,7 +1127,7 @@ var DELIVERIES=[]; // 納品カレンダー転記データ {id,drawingId,date,cl
 var locallyAddedRdocIds={};
 var _localImgVer={};try{var _livStr=localStorage.getItem('dxp_localImgVer');if(_livStr)_localImgVer=JSON.parse(_livStr);}catch(e){}
 var ANNOTATIONS={}; // {drawingId: {stamps:[], qrs:[], texts:[], lines:[], updated:timestamp}}
-var WORKLOGS=[]; // 作業日報 {id,date,worker,machine,status,note,insight,minutes,goodQty,ngQty,savedAt,savedBy}
+var WORKLOGS=[]; // 作業日報 {id,date,worker,machine,status,note,insight,machiningMin,minutes,goodQty,ngQty,savedAt,savedBy}
 
 // マスターデータ（初期値）
 var DEF_MASTERS={
@@ -2177,7 +2177,7 @@ var WL_STATUSES=["製造中","完了"];
 var _wlSeq=0;
 function wlNewRow(){
   _wlSeq++;
-  return {id:'wlrow_'+Date.now()+'_'+_wlSeq,drawingId:'',worker:'',machine:'',status:'製造中',note:'',insight:'',minutes:'',goodQty:'',ngQty:''};
+  return {id:'wlrow_'+Date.now()+'_'+_wlSeq,drawingId:'',worker:'',machine:'',status:'製造中',note:'',insight:'',machiningMin:'',minutes:'',goodQty:'',ngQty:''};
 }
 function wlEnsureRows(){if(!S.wlRows||!S.wlRows.length)S.wlRows=[wlNewRow()];}
 function wlAddRow(){wlEnsureRows();S.wlRows.push(wlNewRow());render();}
@@ -2208,6 +2208,7 @@ function wlSave(){
       id:'wl_'+now+'_'+Math.random().toString(36).slice(2,7),
       date:S.wlDate,drawingId:r.drawingId||null,worker:r.worker,machine:r.machine,status:r.status,
       note:r.note||'',insight:r.insight||'',
+      machiningMin:r.status==='完了'?(parseInt(r.machiningMin,10)||0):null,
       minutes:r.status==='完了'?(parseInt(r.minutes,10)||0):null,
       goodQty:r.status==='完了'?(parseInt(r.goodQty,10)||0):null,
       ngQty:r.status==='完了'?(parseInt(r.ngQty,10)||0):null,
@@ -2307,7 +2308,8 @@ function worklogHTML(){
     h+='<div class="f-field"><label>ステータス</label><div style="display:flex;gap:6px;margin-top:2px">'+WL_STATUSES.map(function(s){var on=row.status===s;var col=s==='完了'?'#1B8C65':'var(--ac)';return'<button type="button" onclick="wlSetField(\''+row.id+'\',\'status\',\''+s+'\')" style="flex:1;padding:8px 0;border-radius:8px;font-size:12px;font-weight:600;border:2px solid '+col+';cursor:pointer;background:'+(on?col:'transparent')+';color:'+(on?'#fff':col)+'">'+s+'</button>'}).join('')+'</div></div>';
     h+='</div>';
     if(done){
-      h+='<div class="f-row" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:10px">';
+      h+='<div class="f-row" style="grid-template-columns:1fr 1fr 1fr 1fr;margin-bottom:10px">';
+      h+='<div class="f-field"><label>加工時間（分）</label><input type="number" min="0" value="'+esc(row.machiningMin)+'" onwheel="this.blur()" oninput="wlSetField(\''+row.id+'\',\'machiningMin\',this.value,true)"></div>';
       h+='<div class="f-field"><label>作業時間（分）</label><input type="number" min="0" value="'+esc(row.minutes)+'" onwheel="this.blur()" oninput="wlSetField(\''+row.id+'\',\'minutes\',this.value,true)"></div>';
       h+='<div class="f-field"><label>良品数</label><input type="number" min="0" value="'+esc(row.goodQty)+'" onwheel="this.blur()" oninput="wlSetField(\''+row.id+'\',\'goodQty\',this.value,true)"></div>';
       h+='<div class="f-field"><label>不良数</label><input type="number" min="0" value="'+esc(row.ngQty)+'" onwheel="this.blur()" oninput="wlSetField(\''+row.id+'\',\'ngQty\',this.value,true)" style="color:var(--rd)"></div>';
@@ -2330,19 +2332,19 @@ function worklogHTML(){
 
   // 履歴
   var hist=WORKLOGS.filter(function(w){return S.wlShowAll||w.date===S.wlDate}).slice().sort(function(a,b){return b.savedAt-a.savedAt});
-  var totals=hist.reduce(function(a,w){a.good+=w.goodQty||0;a.ng+=w.ngQty||0;a.min+=w.minutes||0;return a},{good:0,ng:0,min:0});
+  var totals=hist.reduce(function(a,w){a.good+=w.goodQty||0;a.ng+=w.ngQty||0;a.min+=w.minutes||0;a.mach+=w.machiningMin||0;return a},{good:0,ng:0,min:0,mach:0});
   h+='<div class="section-title" style="margin-top:8px">記録一覧<label style="margin-left:auto;font-size:11px;color:var(--tx3);font-weight:400;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" '+(S.wlShowAll?'checked':'')+' onchange="wlToggleShowAll()">全期間表示</label></div>';
-  h+='<div style="font-size:11px;color:var(--tx3);margin-bottom:10px">'+hist.length+' 件'+(totals.good?' ／ 良品 '+totals.good:'')+(totals.ng?' ／ 不良 '+totals.ng:'')+(totals.min?' ／ 計 '+totals.min+' 分':'')+'</div>';
+  h+='<div style="font-size:11px;color:var(--tx3);margin-bottom:10px">'+hist.length+' 件'+(totals.good?' ／ 良品 '+totals.good:'')+(totals.ng?' ／ 不良 '+totals.ng:'')+(totals.mach?' ／ 加工計 '+totals.mach+' 分':'')+(totals.min?' ／ 作業計 '+totals.min+' 分':'')+'</div>';
   if(!hist.length){
     h+='<div style="background:var(--bg2);border:1px dashed var(--bd);border-radius:var(--r);padding:24px;text-align:center;color:var(--tx3);font-size:13px">まだ記録がありません</div>';
   }else{
-    h+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:760px">';
-    h+='<thead><tr style="background:var(--bg2);color:var(--tx3);text-align:left"><th style="padding:8px 10px">日付</th><th style="padding:8px 10px">図面</th><th style="padding:8px 10px">名前</th><th style="padding:8px 10px">機械番号</th><th style="padding:8px 10px">ステータス</th><th style="padding:8px 10px;text-align:right">時間</th><th style="padding:8px 10px;text-align:right">良品</th><th style="padding:8px 10px;text-align:right">不良</th><th style="padding:8px 10px">備考</th><th style="padding:8px 10px">気付き</th><th></th></tr></thead><tbody>';
+    h+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:840px">';
+    h+='<thead><tr style="background:var(--bg2);color:var(--tx3);text-align:left"><th style="padding:8px 10px">日付</th><th style="padding:8px 10px">図面</th><th style="padding:8px 10px">名前</th><th style="padding:8px 10px">機械番号</th><th style="padding:8px 10px">ステータス</th><th style="padding:8px 10px;text-align:right">加工(分)</th><th style="padding:8px 10px;text-align:right">作業(分)</th><th style="padding:8px 10px;text-align:right">良品</th><th style="padding:8px 10px;text-align:right">不良</th><th style="padding:8px 10px">備考</th><th style="padding:8px 10px">気付き</th><th></th></tr></thead><tbody>';
     hist.forEach(function(w){
       var done=w.status==='完了';
       var wd=w.drawingId?DRAWINGS.find(function(x){return x.id===w.drawingId}):null;
       var dwgCell=wd?'<span style="cursor:pointer;color:var(--ac);font-weight:600" onclick="openDetail('+wd.id+')" title="図面詳細を開く">'+esc(wd.number)+'</span><div style="color:var(--tx3);font-size:10px">'+esc(wd.name)+'</div>':'<span style="color:var(--tx3)">—</span>';
-      h+='<tr style="border-bottom:1px solid var(--bd)"><td style="padding:8px 10px;color:var(--tx2)">'+esc(w.date)+'</td><td style="padding:8px 10px">'+dwgCell+'</td><td style="padding:8px 10px;font-weight:600">'+esc(w.worker)+'</td><td style="padding:8px 10px">'+esc(w.machine)+'</td><td style="padding:8px 10px"><span style="padding:2px 8px;border-radius:6px;font-size:10px;font-weight:700;background:'+(done?'#E8F5EE':'var(--ac2)')+';color:'+(done?'#1B8C65':'var(--ac)')+'">'+esc(w.status)+'</span></td><td style="padding:8px 10px;text-align:right">'+(w.minutes?w.minutes+'分':'—')+'</td><td style="padding:8px 10px;text-align:right">'+(w.goodQty||'—')+'</td><td style="padding:8px 10px;text-align:right;color:'+(w.ngQty?'var(--rd)':'inherit')+'">'+(w.ngQty||'—')+'</td><td style="padding:8px 10px;color:var(--tx2)">'+esc(w.note)+'</td><td style="padding:8px 10px;color:var(--tx2)">'+esc(w.insight)+'</td><td style="padding:8px 10px"><button onclick="wlDelete(\''+w.id+'\')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:11px">削除</button></td></tr>';
+      h+='<tr style="border-bottom:1px solid var(--bd)"><td style="padding:8px 10px;color:var(--tx2)">'+esc(w.date)+'</td><td style="padding:8px 10px">'+dwgCell+'</td><td style="padding:8px 10px;font-weight:600">'+esc(w.worker)+'</td><td style="padding:8px 10px">'+esc(w.machine)+'</td><td style="padding:8px 10px"><span style="padding:2px 8px;border-radius:6px;font-size:10px;font-weight:700;background:'+(done?'#E8F5EE':'var(--ac2)')+';color:'+(done?'#1B8C65':'var(--ac)')+'">'+esc(w.status)+'</span></td><td style="padding:8px 10px;text-align:right">'+(w.machiningMin?w.machiningMin+'分':'—')+'</td><td style="padding:8px 10px;text-align:right">'+(w.minutes?w.minutes+'分':'—')+'</td><td style="padding:8px 10px;text-align:right">'+(w.goodQty||'—')+'</td><td style="padding:8px 10px;text-align:right;color:'+(w.ngQty?'var(--rd)':'inherit')+'">'+(w.ngQty||'—')+'</td><td style="padding:8px 10px;color:var(--tx2)">'+esc(w.note)+'</td><td style="padding:8px 10px;color:var(--tx2)">'+esc(w.insight)+'</td><td style="padding:8px 10px"><button onclick="wlDelete(\''+w.id+'\')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:11px">削除</button></td></tr>';
     });
     h+='</tbody></table></div>';
   }
