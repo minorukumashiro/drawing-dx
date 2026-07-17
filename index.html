@@ -2358,7 +2358,8 @@ function worklogHTML(){
   h+='<button style="padding:9px 22px;border-radius:10px;border:none;background:'+(S.wlSaved?'#1B8C65':'var(--ac)')+';color:#fff;font-size:13px;font-weight:700;cursor:pointer" onclick="wlSave()" '+(validCount===0?'disabled':'')+'>'+(S.wlSaved?'✓ 保存しました':'日報を保存')+'</button>';
   h+='</div>';
 
-  // 履歴
+  // 記録一覧（履歴）— PC側のみ閲覧可（スマホでは非表示）
+  if(!isMobileDevice()){
   var hist=WORKLOGS.filter(function(w){return S.wlShowAll||w.date===S.wlDate}).slice().sort(function(a,b){return b.savedAt-a.savedAt});
   var totals=hist.reduce(function(a,w){a.good+=w.goodQty||0;a.ng+=w.ngQty||0;a.min+=w.minutes||0;a.mach+=w.machiningMin||0;return a},{good:0,ng:0,min:0,mach:0});
   h+='<div class="section-title" style="margin-top:8px">記録一覧<label style="margin-left:auto;font-size:11px;color:var(--tx3);font-weight:400;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" '+(S.wlShowAll?'checked':'')+' onchange="wlToggleShowAll()">全期間表示</label></div>';
@@ -2376,6 +2377,7 @@ function worklogHTML(){
     });
     h+='</tbody></table></div>';
   }
+  } // end 記録一覧（PCのみ）
   return h;
 }
 function scatterSVG(rows,target){
