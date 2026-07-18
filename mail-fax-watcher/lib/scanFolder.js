@@ -3,7 +3,9 @@ const path = require('path');
 
 // mail-inbox配下 / fax共有配下を1階層だけ列挙する（processedサブフォルダは除外）。
 // フォルダが存在しない/読めない場合は空配列を返す（FAX共有の一時的な切断などに耐える）。
-function listCandidates(dirPath, source, processedDirName) {
+// knownNames: 既に処理済み/ベースライン済みのファイル名集合。渡された場合、該当ファイルは
+// stat自体を省略する（数千ファイルのSMB共有ではstatが走査時間の大半を占めるため）。
+function listCandidates(dirPath, source, processedDirName, knownNames) {
   let entries;
   try {
     entries = fs.readdirSync(dirPath, { withFileTypes: true });
@@ -15,6 +17,7 @@ function listCandidates(dirPath, source, processedDirName) {
   for (const ent of entries) {
     if (ent.isDirectory()) continue; // processedサブフォルダ等は無視
     if (processedDirName && ent.name === processedDirName) continue;
+    if (knownNames && knownNames.has(ent.name)) continue; // 処理済み: stat省略
     const filePath = path.join(dirPath, ent.name);
     let stat;
     try {

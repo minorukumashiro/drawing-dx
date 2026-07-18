@@ -3,4 +3,5 @@ config.json
 serviceAccountKey.json
 state.json
 *.log
+run.log.old
 cleanup-backup-*.json

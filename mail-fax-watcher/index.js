@@ -45,13 +45,18 @@ function mailDisplayName(fileName) {
   return stripped.replace(/\.[^.]+$/, '');
 }
 
-// FAXファイル名 "<送信元番号>_<YYYYMMDD>_<HHMMSS>.pdf" から表示名と日付を推測する
+// FAXファイル名 "<送信元>_<YYYYMMDD>_<HHMMSS>.pdf" から表示名と日付を推測する。
+// 送信元は番号のほか「ソウシンモトフメイ」「9999 99」等の不明表記も来るため整形する。
 function faxNameAndDate(fileName) {
-  const m = fileName.match(/^(\d+)_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/);
+  const m = fileName.match(/^(.+?)_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/);
   if (!m) return { name: fileName.replace(/\.[^.]+$/, ''), date: todayJst() };
-  const [, faxNo, y, mo, d, hh, mm] = m;
+  const [, sender, y, mo, d, hh, mm] = m;
+  let label;
+  if (/^\d+$/.test(sender)) label = sender; // 通常のFAX番号
+  else if (/ソウシンモトフメイ|^[9\s]+$/.test(sender)) label = '送信元不明';
+  else label = sender; // その他の文字列はそのまま（意味のある名前の可能性）
   return {
-    name: `FAX受信 (${faxNo}) ${y}-${mo}-${d} ${hh}:${mm}`,
+    name: `FAX受信 (${label}) ${y}-${mo}-${d} ${hh}:${mm}`,
     date: `${y}-${mo}-${d}`
   };
 }
@@ -72,6 +77,9 @@ function buildDrawingMeta(id, item) {
   const number = isFax ? '' : guessDrawingNumber(item.fileName);
   const tags = [isFax ? 'FAX取込' : 'メール取込'];
   if (item.oversized) tags.push('サイズ超過:元ファイル要確認');
+  // ファイル名から注文書/納品書/見積書らしさを判定してタグ付け（除外はしない=手動振り分けの目印）
+  const docKind = detectNonDrawingDoc(item.fileName);
+  if (docKind) tags.push(docKind);
 
   return {
     id,
@@ -143,6 +151,18 @@ async function main() {
 
   log('取込チェック開始');
 
+  // state整理: mail:エントリは処理時にファイルを processed/ へ移動済みのため90日経過分は安全に削除できる。
+  // fax:エントリは共有フォルダに元ファイルが残り続けるため、削除すると再取込されてしまう→保持する。
+  {
+    const cutoff = now.getTime() - 90 * 24 * 3600 * 1000;
+    let pruned = 0;
+    for (const k of Object.keys(st.processed)) {
+      const v = st.processed[k];
+      if (k.startsWith('mail:') && v && v.at && new Date(v.at).getTime() < cutoff) { delete st.processed[k]; pruned++; }
+    }
+    if (pruned > 0) log(`state整理: 90日経過したメール処理記録 ${pruned} 件を削除`);
+  }
+
   // 監視フォルダの到達性（Outlook保存先・FAX共有の切断検知用。healthに記録しアプリ側で警告表示）
   const mailFolderOk = fs.existsSync(cfg.sources.mailInboxFolder);
   const faxFolderOk = fs.existsSync(cfg.sources.faxFolder);
@@ -150,7 +170,15 @@ async function main() {
   if (!faxFolderOk) log(`⚠ FAX共有フォルダに到達できません: ${cfg.sources.faxFolder}`);
 
   const mailItems = listCandidates(cfg.sources.mailInboxFolder, 'mail', PROCESSED_DIR_NAME);
-  const faxItems = listCandidates(cfg.sources.faxFolder, 'fax', PROCESSED_DIR_NAME);
+  // FAXは処理済み・ベースライン済みのファイル名を state から集めて stat を省略する
+  // （8千件超のSMB共有では stat が走査時間の大半を占めるため。キーは "fax:<name>|<size>" 形式）。
+  // 同名別サイズの再送は取りこぼすが、FAXファイル名にはタイムスタンプが入るため実質衝突しない。
+  const knownFaxNames = new Set(
+    Object.keys(st.processed)
+      .filter((k) => k.startsWith('fax:'))
+      .map((k) => k.slice(4, k.lastIndexOf('|')))
+  );
+  const faxItems = listCandidates(cfg.sources.faxFolder, 'fax', PROCESSED_DIR_NAME, st.faxBaselineSeeded ? knownFaxNames : null);
 
   // FAX共有フォルダには導入以前からの大量の過去ファイルが蓄積されているため、
   // 初回実行時はそれらを「待機」へ一括登録せず、既存分をベースラインとして記録するだけにする。

@@ -18,8 +18,9 @@ $nodeExe = $nodeCmd.Source
 $logPath = Join-Path $scriptDir 'run.log'
 $taskName = 'DrawingDX-MailFaxWatcher'
 
-$argument = "/c `"`"$nodeExe`" index.js >> `"$logPath`" 2>&1`""
-$action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument $argument -WorkingDirectory $scriptDir
+# runner.cmd 経由で起動（run.log が5MB超なら run.log.old へ退避するログローテーション付き）
+$runnerPath = Join-Path $scriptDir 'runner.cmd'
+$action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/c `"`"$runnerPath`"`"" -WorkingDirectory $scriptDir
 
 # "毎日 x 30分おき x 継続" の巡回トリガーを作る
 $repeatSeed = New-ScheduledTaskTrigger -Once -At (Get-Date).Date `
