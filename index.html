@@ -1493,6 +1493,7 @@ function render(){
           +'<div class="g-meta">'+d.number+' · '+d.mat+' · <span style="color:var(--ac)">'+esc(d.client)+'</span></div>'
           +'<div class="g-foot"><span class="g-cat">'+d.cat+'</span>'
           +'<button class="g-btn" style="font-size:10px;padding:2px 8px" onclick="event.stopPropagation();selAnno('+d.id+');S.tab=\'annotate\';render()">書込</button>'
+          +'<button class="g-btn" style="font-size:10px;padding:2px 8px;color:var(--ac)" title="AIで図番・名称・サイズ・得意先を読み取って編集画面に反映" onclick="event.stopPropagation();aiReadCard('+d.id+')">AI読取</button>'
           +(!_mobile?'<button class="g-btn" style="font-size:10px;padding:2px 8px" onclick="event.stopPropagation();S.invDrawing=DRAWINGS.find(function(x){return x.id==='+d.id+'});S.tab=\'invoice\';render()">帳票</button>':'')
           +(!_mobile?'<button class="g-btn" onclick="event.stopPropagation();doSearch(DRAWINGS.find(function(x){return x.id==='+d.id+'}))">類似検索</button>':'')
           +'</div></div>';
@@ -3307,7 +3308,73 @@ function ocrFromPdf(dataUrl){
   }catch(err){S.ocrSt='done';S.ocrF={rawText:'PDFエラー: '+err.message};render()}
 }
 
+// AI(Claude Opus 4.8) 精密読取り → 失敗時はCloud Vision+正規表現(runOCRVision)にフォールバック
 function runOCR(img){
+  var el=document.querySelector('.ocr-bar.run');
+  if(el)el.innerHTML='<div class="dots" style="margin:0"><span></span><span></span><span></span></div>AIで精密読取り中...';
+  aiExtractFields(img).then(function(res){
+    if(res&&res.error)throw new Error(res.error);
+    var fx=(res&&res.fields)||{};
+    if(!(fx.number||fx.name||fx.material||fx.size||fx.client))throw new Error('AI応答が空');
+    var f={};
+    if(fx.number)f.number=fx.number;
+    if(fx.name)f.name=matchExistingName(fx.name);
+    if(fx.material)f.material=fx.material;
+    if(fx.size)f.size=fx.size;
+    if(fx.client)f.client=fx.client;
+    if(fx.surface)f.surface=fx.surface;
+    if(fx.tolerance)f.tolerance=fx.tolerance;
+    if(fx.roughness)f.roughness=fx.roughness;
+    if(fx.quantity)f.quantity=fx.quantity;
+    var tg=[];if(fx.category)tg.push(fx.category);if(fx.material)tg.push(fx.material);if(fx.surface)tg.push(fx.surface);if(tg.length)f.tags=tg.join(', ');
+    f.rawText='[AI Opus 4.8 読取]\n'+Object.keys(fx).filter(function(k){return fx[k]}).map(function(k){return k+': '+fx[k]}).join('\n');
+    S.ocrF=f;S.ocrSt='done';render();
+  }).catch(function(e){
+    console.warn('AI読取失敗→Cloud Visionへ:',e&&e.message||e);
+    runOCRVision(img);
+  });
+}
+
+function aiExtractFields(img){
+  var cu=(window.firebase&&firebase.auth)?firebase.auth().currentUser:null;
+  return (cu?cu.getIdToken():Promise.resolve(null)).then(function(tok){
+    if(!tok)throw new Error('ログイン情報を確認できません。再読み込みしてログインし直してください。');
+    var ctrl=(typeof AbortController!=='undefined')?new AbortController():null;
+    var timer=ctrl?setTimeout(function(){ctrl.abort()},80000):null;
+    return fetch('https://asia-northeast1-drawing-dx.cloudfunctions.net/extractFields',{
+      method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
+      body:JSON.stringify({image:img,clients:(window.MASTERS&&MASTERS.clients)||[]}),
+      signal:ctrl?ctrl.signal:undefined
+    }).then(function(r){if(timer)clearTimeout(timer);return r.json();});
+  });
+}
+
+// 待機カード等から: 画像をAIで読み取り、編集画面にプリセット（保存はユーザーが内容確認して押す）
+function aiReadCard(id){
+  var d=DRAWINGS.find(function(x){return x.id===id});if(!d)return;
+  if(typeof window.getDrawingImageForAI!=='function'){alert('AI読取の準備ができていません（ページを再読み込みしてください）。');return;}
+  toast('🖼 '+(d.number||('図面#'+id))+' をAIで読取り中...');
+  window.getDrawingImageForAI(id).then(function(img){
+    if(!img){alert('この案件には読み取れる画像がありません（画像・PDFが未登録）。');return null;}
+    return aiExtractFields(img);
+  }).then(function(res){
+    if(!res)return;
+    if(res.error){alert('AI読取に失敗しました: '+res.error);return;}
+    var fx=res.fields||{};
+    if(!(fx.number||fx.name||fx.material||fx.size||fx.client)){toast('AIは有効な項目を読み取れませんでした');return;}
+    editDrawing(id);
+    var ed=S.editDwg;if(!ed)return;
+    if(fx.number)ed.number=fx.number;
+    if(fx.name)ed.name=matchExistingName(fx.name);
+    if(fx.material)ed.mat=fx.material;
+    if(fx.size)ed.size=fx.size;
+    if(fx.client)ed.client=fx.client;
+    render();
+    toast('🖼 AI読取完了 — 内容を確認して「保存」を押してください'+(fx.note?'（注記: '+fx.note+'）':''));
+  }).catch(function(e){alert('AI読取エラー: '+(e&&e.message||e));});
+}
+
+function runOCRVision(img){
   var el=document.querySelector('.ocr-bar.run');
   if(el)el.innerHTML='<div class="dots" style="margin:0"><span></span><span></span><span></span></div>Cloud Vision OCR中...';
   console.log('OCR画像サイズ:',(img.length*0.75/1024/1024).toFixed(1),'MB');
@@ -4691,6 +4758,7 @@ render();
     });
   }
   window.aiAskAboutDrawing=openWithDrawing;
+  window.getDrawingImageForAI=getDrawingImageForAI; // AI読取(extractFields)から図面画像レンダラを再利用
 
   function send(){
     var t=(input.value||'').trim();
