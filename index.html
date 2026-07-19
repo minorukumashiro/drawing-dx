@@ -370,7 +370,7 @@ function loadData(){
       var tx=db.transaction('meta','readonly');
       var store=tx.objectStore('meta');
       var reqs={};
-      ['drawings','invoices','scannedPdfs','pdfThumbs','nextId','masters','serverUrl','inspections','relatedFiles','relatedDocuments','annotations','deliveries','worklogs'].forEach(function(k){
+      ['drawings','invoices','scannedPdfs','pdfThumbs','nextId','masters','serverUrl','inspections','relatedFiles','relatedDocuments','annotations','deliveries','worklogs','trash'].forEach(function(k){
         reqs[k]=store.get(k);
       });
       tx.oncomplete=function(){
@@ -385,6 +385,7 @@ function loadData(){
         INVOICES=reqs.invoices.result||[];
         if(reqs.deliveries.result)DELIVERIES=reqs.deliveries.result;
         if(reqs.worklogs.result)WORKLOGS=reqs.worklogs.result;
+        if(reqs.trash.result)TRASH=reqs.trash.result;
         scannedPdfs=reqs.scannedPdfs.result||{};
         pdfThumbnails=reqs.pdfThumbs.result||{};
         inspectionReports=reqs.inspections.result||{};
@@ -515,6 +516,7 @@ function saveAll(skipImages){
   dbPut('meta','relatedDocuments',relatedDocuments);
   dbPut('meta','annotations',ANNOTATIONS);
   dbPut('meta','worklogs',WORKLOGS);
+  dbPut('meta','trash',TRASH);
   // Save images individually
   Object.keys(scannedImages).forEach(function(id){
     dbPut('images',String(id),scannedImages[id]);
@@ -593,7 +595,7 @@ function fbPushAll(skipImages){
     fbMetaSyncing=true;
     var payload={
       drawings:DRAWINGS,masters:MASTERS,inspections:inspMeta(),relatedDocuments:relDocMeta(),
-      invoices:INVOICES,annotations:ANNOTATIONS,deliveries:DELIVERIES,worklogs:WORKLOGS,nextId:nextId,
+      invoices:INVOICES,annotations:ANNOTATIONS,deliveries:DELIVERIES,worklogs:WORKLOGS,trash:TRASH,nextId:nextId,
       lastModified:firebase.firestore.FieldValue.serverTimestamp(),
       lastClient:fbClientId()
     };
@@ -750,6 +752,7 @@ function checkWatcherHealth(){
     if(d.lastSuccessAt&&(Date.now()-new Date(d.lastSuccessAt).getTime())>26*3600*1000)msgs.push('26時間以上取込が動いていません（監視PCの電源とOutlookの起動を確認）');
     if(d.faxFolderOk===false)msgs.push('FAX共有フォルダに接続できません');
     if(d.mailFolderOk===false)msgs.push('メール監視フォルダが見つかりません');
+    if(d.backupOk===false)msgs.push('日次バックアップに失敗しています（NAS接続を確認）');
     if(!msgs.length)return;
     var el=document.createElement('div');
     el.style.cssText='position:fixed;top:0;left:0;right:0;z-index:9999;background:#B3261E;color:#fff;padding:10px 44px 10px 16px;font-size:12px;font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,0.3);line-height:1.6';
@@ -860,7 +863,10 @@ function fbStartListener(){
     if(data.deliveries)DELIVERIES=data.deliveries;
     if(data.annotations)ANNOTATIONS=data.annotations;
     if(data.worklogs)WORKLOGS=data.worklogs;
+    if(data.trash)TRASH=data.trash;
     if(data.nextId)nextId=Math.max(nextId,data.nextId);
+    // 30日経過したゴミ箱エントリの自動完全削除（1セッション1回）
+    purgeOldTrash();
     // Save to IndexedDB
     dbPut('meta','drawings',DRAWINGS);
     dbPut('meta','deliveries',DELIVERIES);
@@ -870,6 +876,7 @@ function fbStartListener(){
     dbPut('meta','invoices',INVOICES);
     dbPut('meta','annotations',ANNOTATIONS);
     dbPut('meta','worklogs',WORKLOGS);
+    dbPut('meta','trash',TRASH);
     dbPut('meta','nextId',nextId);
     // Cache in localStorage for next session's instant load
     try{
@@ -882,6 +889,7 @@ function fbStartListener(){
         annotations:ANNOTATIONS,
         deliveries:DELIVERIES,
         worklogs:WORKLOGS,
+        trash:TRASH,
         nextId:nextId
       }));
     }catch(e){/* localStorage may be full */}
@@ -1036,7 +1044,7 @@ async function forcePushToFirebase(){
     await fbPushImages();
     var payload={
       drawings:DRAWINGS,masters:MASTERS,inspections:inspMeta(),relatedDocuments:relDocMeta(),
-      invoices:INVOICES,annotations:ANNOTATIONS,deliveries:DELIVERIES,worklogs:WORKLOGS,nextId:nextId,
+      invoices:INVOICES,annotations:ANNOTATIONS,deliveries:DELIVERIES,worklogs:WORKLOGS,trash:TRASH,nextId:nextId,
       lastModified:firebase.firestore.FieldValue.serverTimestamp(),
       lastClient:fbClientId()
     };
@@ -1130,7 +1138,7 @@ function importAllData(event){
         updateSyncStatus('pushing');
         var _impPayload={
           drawings:DRAWINGS,masters:MASTERS,inspections:inspMeta(),relatedDocuments:relDocMeta(),
-          invoices:INVOICES,annotations:ANNOTATIONS,deliveries:DELIVERIES,worklogs:WORKLOGS,nextId:nextId,
+          invoices:INVOICES,annotations:ANNOTATIONS,deliveries:DELIVERIES,worklogs:WORKLOGS,trash:TRASH,nextId:nextId,
           lastModified:firebase.firestore.FieldValue.serverTimestamp(),
           lastClient:fbClientId()
         };
@@ -1156,6 +1164,7 @@ function importAllData(event){
 var DRAWINGS=[];
 var SIM={circle:{shaft:30,bracket:15,plate:20,spacer:58},shaft:{circle:30,bracket:20,plate:12,spacer:62},bracket:{circle:15,shaft:20,plate:45,spacer:12},plate:{circle:20,shaft:12,bracket:45,spacer:15},spacer:{circle:58,shaft:62,bracket:12,plate:15}};
 var INVOICES=[],scannedImages={},scannedPdfs={},scannedBlobUrls={},pdfThumbnails={},inspectionReports={},relatedFiles={},relatedDocuments={},nextId=11;
+var TRASH=[]; // 削除済み図面のゴミ箱 {d:図面メタ, deletedAt:ms, deletedBy:email} — 30日で自動完全削除
 var DELIVERIES=[]; // 納品カレンダー転記データ {id,drawingId,date,client,number,name,size,qty,price,transcribedAt}
 var locallyAddedRdocIds={};
 var _localImgVer={};try{var _livStr=localStorage.getItem('dxp_localImgVer');if(_livStr)_localImgVer=JSON.parse(_livStr);}catch(e){}
@@ -1197,6 +1206,7 @@ function bootApp(){
         if(data.deliveries)DELIVERIES=data.deliveries;
         if(data.annotations)ANNOTATIONS=data.annotations;
         if(data.worklogs)WORKLOGS=data.worklogs;
+        if(data.trash)TRASH=data.trash;
         if(data.nextId)nextId=data.nextId;
         window._cacheLoaded=true; // IndexedDB が空でもこのデータを保持する
         // Render cached data instantly
@@ -1338,7 +1348,7 @@ function render(){
   h+='</div>';
 
   // BOARD
-  if(S.tab==='board'){h+='<div class="section-title">案件ホワイトボード</div><div style="margin-bottom:14px;display:flex;gap:8px"><input id="wbSearchInput" type="search" placeholder="図面名・図面番号・取引先で絞り込み..." value="'+esc(S.wbSearchInput||'')+'" oninput="S.wbSearchInput=this.value" onkeydown="if(event.key===\'Enter\'){S.wbSearch=S.wbSearchInput;render()}" style="flex:1;padding:9px 14px;border-radius:10px;border:1px solid '+(S.wbSearch?'var(--ac)':'var(--bd)')+';background:var(--bg);color:var(--tx);font-size:13px;outline:none;box-sizing:border-box"><button onclick="S.wbSearch=S.wbSearchInput||S.wbSearch;render()" style="padding:9px 18px;border-radius:10px;border:none;background:var(--ac);color:#fff;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">検索</button>'+(S.wbSearch?'<button onclick="S.wbSearch=\'\';S.wbSearchInput=\'\';render()" style="padding:9px 14px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);font-size:13px;cursor:pointer">✕ クリア</button>':'')+'</div><div class="board">';sts.forEach(function(st){var _wbq=(S.wbSearch||'').toLowerCase();var items=DRAWINGS.filter(function(d){if(d.status!==st)return false;if(!_wbq)return true;return d.name.toLowerCase().indexOf(_wbq)>=0||d.number.toLowerCase().indexOf(_wbq)>=0||d.client.toLowerCase().indexOf(_wbq)>=0||(d.tags&&d.tags.join(' ').toLowerCase().indexOf(_wbq)>=0);});var _bcCol=_mobile&&S.boardCollapsed&&S.boardCollapsed[st];var _bcChev=_mobile?'<span style="display:inline-block;width:12px;font-size:9px;color:var(--tx3);transform:rotate('+(_bcCol?'-90deg':'0deg')+')">▼</span>':'';h+='<div class="board-col"><div class="board-col-head"'+(_mobile?' onclick="toggleBoardCol(\''+st+'\')" style="cursor:pointer;user-select:none"':'')+'>'+_bcChev+'<span class="dot" style="background:'+stC[st]+'"></span>'+st+'<span class="cnt">'+items.length+'</span></div><div'+(_bcCol?' style="display:none"':'')+'>';items.forEach(function(d){var hasAnno=ANNOTATIONS[d.id]&&((ANNOTATIONS[d.id].lines&&ANNOTATIONS[d.id].lines.length)||(ANNOTATIONS[d.id].stamps&&ANNOTATIONS[d.id].stamps.length)||(ANNOTATIONS[d.id].texts&&ANNOTATIONS[d.id].texts.length)||(ANNOTATIONS[d.id].qrs&&ANNOTATIONS[d.id].qrs.length));h+='<div class="board-card" onclick="openDetail('+d.id+')"><div class="bc-title">'+d.name+(d.scanned?'<span class="badge badge-scan">スキャン</span>':'')+(hasAnno?'<span class="badge" style="background:#FDF3E0;color:#B06E15;margin-left:4px">✏ 書込</span>':'')+'</div><div class="bc-meta">'+d.number+' · '+d.client+'</div><div class="bc-tags"><span class="bc-tag" style="background:'+stB[st]+';color:'+stC[st]+'">'+st+'</span><span class="bc-tag" style="background:'+(d.priority==='高'?'var(--rd2)':d.priority==='中'?'var(--am2)':'var(--bg3)')+';color:'+(d.priority==='高'?'var(--rd)':d.priority==='中'?'var(--am)':'var(--tx3)')+'">'+d.priority+'</span></div><div style="display:flex;gap:4px;margin-top:6px"><button style="font-size:9px;padding:2px 6px;border-radius:4px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer" onclick="event.stopPropagation();selAnno('+d.id+');S.tab=\'annotate\';render()">書込</button><button style="font-size:9px;padding:2px 6px;border-radius:4px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer" onclick="event.stopPropagation();printDrawingImage('+d.id+')">印刷</button></div></div>'});h+='</div></div>'});h+='</div>'}
+  if(S.tab==='board'){h+='<div class="section-title">案件ホワイトボード</div><div style="margin-bottom:14px;display:flex;gap:8px"><input id="wbSearchInput" type="search" placeholder="図面名・図面番号・取引先で絞り込み..." value="'+esc(S.wbSearchInput||'')+'" oninput="S.wbSearchInput=this.value" onkeydown="if(event.key===\'Enter\'){S.wbSearch=S.wbSearchInput;render()}" style="flex:1;padding:9px 14px;border-radius:10px;border:1px solid '+(S.wbSearch?'var(--ac)':'var(--bd)')+';background:var(--bg);color:var(--tx);font-size:13px;outline:none;box-sizing:border-box"><button onclick="S.wbSearch=S.wbSearchInput||S.wbSearch;render()" style="padding:9px 18px;border-radius:10px;border:none;background:var(--ac);color:#fff;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">検索</button>'+(S.wbSearch?'<button onclick="S.wbSearch=\'\';S.wbSearchInput=\'\';render()" style="padding:9px 14px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);font-size:13px;cursor:pointer">✕ クリア</button>':'')+'</div><div class="board">';sts.forEach(function(st){var _wbq=(S.wbSearch||'').toLowerCase();var items=DRAWINGS.filter(function(d){if(d.status!==st)return false;if(!_wbq)return true;return d.name.toLowerCase().indexOf(_wbq)>=0||d.number.toLowerCase().indexOf(_wbq)>=0||d.client.toLowerCase().indexOf(_wbq)>=0||(d.tags&&d.tags.join(' ').toLowerCase().indexOf(_wbq)>=0);});var _bcCol=_mobile&&S.boardCollapsed&&S.boardCollapsed[st];var _bcChev=_mobile?'<span style="display:inline-block;width:12px;font-size:9px;color:var(--tx3);transform:rotate('+(_bcCol?'-90deg':'0deg')+')">▼</span>':'';h+='<div class="board-col"><div class="board-col-head"'+(_mobile?' onclick="toggleBoardCol(\''+st+'\')" style="cursor:pointer;user-select:none"':'')+'>'+_bcChev+'<span class="dot" style="background:'+stC[st]+'"></span>'+st+(st==='待機'&&items.length?'<button onclick="event.stopPropagation();openTriage()" style="font-size:10px;padding:2px 10px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer;margin-left:4px">一括整理</button>':'')+'<span class="cnt">'+items.length+'</span></div><div'+(_bcCol?' style="display:none"':'')+'>';items.forEach(function(d){var hasAnno=ANNOTATIONS[d.id]&&((ANNOTATIONS[d.id].lines&&ANNOTATIONS[d.id].lines.length)||(ANNOTATIONS[d.id].stamps&&ANNOTATIONS[d.id].stamps.length)||(ANNOTATIONS[d.id].texts&&ANNOTATIONS[d.id].texts.length)||(ANNOTATIONS[d.id].qrs&&ANNOTATIONS[d.id].qrs.length));h+='<div class="board-card" onclick="openDetail('+d.id+')"><div class="bc-title">'+d.name+(d.scanned?'<span class="badge badge-scan">スキャン</span>':'')+(hasAnno?'<span class="badge" style="background:#FDF3E0;color:#B06E15;margin-left:4px">✏ 書込</span>':'')+'</div><div class="bc-meta">'+d.number+' · '+d.client+'</div><div class="bc-tags"><span class="bc-tag" style="background:'+stB[st]+';color:'+stC[st]+'">'+st+'</span><span class="bc-tag" style="background:'+(d.priority==='高'?'var(--rd2)':d.priority==='中'?'var(--am2)':'var(--bg3)')+';color:'+(d.priority==='高'?'var(--rd)':d.priority==='中'?'var(--am)':'var(--tx3)')+'">'+d.priority+'</span></div><div style="display:flex;gap:4px;margin-top:6px"><button style="font-size:9px;padding:2px 6px;border-radius:4px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer" onclick="event.stopPropagation();selAnno('+d.id+');S.tab=\'annotate\';render()">書込</button><button style="font-size:9px;padding:2px 6px;border-radius:4px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer" onclick="event.stopPropagation();printDrawingImage('+d.id+')">印刷</button></div></div>'});h+='</div></div>'});h+='</div>'}
 
   // 生産性分析
   if(S.tab==='analytics'){h+=analyticsHTML();}
@@ -1477,6 +1487,7 @@ function render(){
     // Client filter text input
     h+='<input id="clientFilterBox" placeholder="取引先で絞込..." value="'+esc(S.clientFilter||'')+'" style="padding:8px 12px;border:1px solid var(--bd);border-radius:10px;font-size:13px;background:var(--bg);box-shadow:var(--shadow);max-width:200px;flex:1;color:'+(S.clientFilter?'var(--ac)':'var(--tx)')+';font-weight:'+(S.clientFilter?'600':'normal')+'">';
     cats.forEach(function(c){h+='<button class="f-btn '+(S.fcat===c?'on':'off')+'" onclick="S.fcat=\''+c+'\';render()">'+c+'</button>'});
+    if(!_mobile)h+='<button onclick="openTrash()" style="margin-left:auto;font-size:11px;padding:7px 12px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--tx3);cursor:pointer;white-space:nowrap">🗑 削除済み'+(TRASH.length?'('+TRASH.length+')':'')+'</button>';
     h+='</div>';
     // Group by client sorted by Japanese 50-on order
     var clients={};
@@ -1640,6 +1651,63 @@ function render(){
   // REGISTER
   if(S.regOpen){var of=S.ocrF;var ocr='';var dupWarn='';var docWarn='';if(S.ocrSt==='running')ocr='<div class="ocr-bar run"><div class="dots" style="margin:0"><span></span><span></span><span></span></div>AI読取中... 図面のテキストを解析しています</div>';else if(S.ocrSt==='done'){var cnt=0;if(of.number)cnt++;if(of.name)cnt++;if(of.material)cnt++;if(of.size)cnt++;if(of.client)cnt++;if(of.surface)cnt++;ocr='<div class="ocr-bar ok"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>AI読取完了 — '+cnt+'項目を自動検出・入力しました'+(of.surface?' (表面処理:'+esc(of.surface)+')':'')+(of.tolerance?' (公差:'+esc(of.tolerance)+')':'')+(of.roughness?' (粗さ:'+esc(of.roughness)+')':'')+'</div>';var sim=findSimilarDrawing(of);if(sim){var sd=sim.drawing;dupWarn='<div style="background:#FFF3CD;border:1px solid #F0AD4E;border-radius:8px;padding:10px 14px;margin-bottom:2px;font-size:12px;color:#856404"><strong>⚠ 重複の可能性あり</strong> — 類似する図面が登録済みです：図面番号「'+esc(sd.number)+'」'+esc(sd.name)+' / '+esc(sd.client)+'</div>';}var dk=detectNonDrawingDoc(of.rawText)||detectNonDrawingDoc(S.regName);if(dk)docWarn='<div style="background:#FDECEC;border:1px solid #D32F2F;border-radius:8px;padding:10px 14px;margin-bottom:2px;font-size:12px;color:#D32F2F"><strong>⚠ 図面ではない可能性</strong> — この書類は「'+esc(dk)+'」と思われます。図面でなければ登録せず、スキャンフォルダ側で管理してください。</div>';}
   h+='<div class="modal-bg" onclick="closeReg()"><div class="modal" onclick="event.stopPropagation()"><div class="modal-head"><h2>図面登録（AI-OCR取込）</h2><button class="close-btn" onclick="closeReg()">&times;</button></div><div style="padding:18px 22px"><div class="upload-area '+(S.regPrev?'has':'')+'">'+(S.regPrev?(S.regIsPdf?'<div style="text-align:center;padding:10px"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#C03030" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><div style="margin-top:4px;font-size:11px;color:#C03030;font-weight:500">PDF読込済</div></div>':'<img id="regPrevImg" style="max-width:100%;max-height:160px;object-fit:contain;border-radius:6px;display:block;margin:0 auto">')+'<div style="margin-top:6px;font-size:11px;color:var(--gn);font-weight:500">'+esc(S.regName)+'</div>':'<h3 style="font-size:12px;margin-top:4px">スキャン図面をアップロード</h3><p style="font-size:11px;color:var(--tx3)">PDF,PNG,JPEG対応・OCR自動読取</p>')+'<input type="file" accept="image/*,.pdf" onchange="handleFile(event)"></div>'+ocr+dupWarn+docWarn+'<div class="f-row"><div class="f-field"><label>図面番号*'+(of.number?'<span class="ocr-tag">OCR</span>':'')+'</label><input id="rN" class="'+(of.number?'ocr-filled':'')+'" value="'+esc(of.number||'DWG-'+String(400+nextId).padStart(4,'0'))+'"></div><div class="f-field"><label>図面名称*'+(of.name?'<span class="ocr-tag">OCR</span>':'')+'</label><input id="rNm" class="'+(of.name?'ocr-filled':'')+'" value="'+esc(of.name||'')+'"></div></div><div class="f-row"><div class="f-field"><label>材質'+(of.material?'<span class="ocr-tag">OCR</span>':'')+'</label><input id="rM" list="matList" class="'+(of.material?'ocr-filled':'')+'" value="'+esc(of.material||'')+'"></div><div class="f-field"><label>サイズ'+(of.size?'<span class="ocr-tag">OCR</span>':'')+'</label><input id="rSz" class="'+(of.size?'ocr-filled':'')+'" value="'+esc(of.size||'')+'"></div></div><div class="f-row"><div class="f-field"><label>取引先</label><input id="rCl" list="clList" value="'+esc(of.client||S.regFileClient||'')+'"></div><div class="f-field"><label>単価</label><input id="rPr" type="number" onwheel="this.blur()"></div></div><div class="f-row"><div class="f-field"><label>ステータス</label><select id="rSt">'+MASTERS.statuses.map(function(s){return'<option'+(s==='待機'?' selected':'')+'>'+s+'</option>'}).join('')+'</select></div><div class="f-field"><label>優先度</label><select id="rPri">'+["高","中","低"].map(function(p){return'<option'+(p==="中"?' selected':'')+'>'+p+'</option>'}).join('')+'</select></div></div><div class="f-field" style="margin-bottom:12px"><label>タグ</label><input id="rTg" value="'+esc(of.tags||'')+'"></div><div class="f-field"><label>OCRテキスト</label><textarea readonly style="background:var(--bg2);font-size:10px;color:var(--tx2)">'+esc(of.rawText||'アップロード後に表示')+'</textarea></div></div><div class="modal-foot"><button class="btn-cancel" onclick="closeReg()">キャンセル</button><button class="btn-save" onclick="saveDwg()"'+(S.ocrSt==='running'?' disabled':'')+'>登録</button></div></div></div>'}
+
+  // 待機の一括整理モーダル
+  if(S.triageOpen){
+    var tItems=triageItems();
+    var tSelCount=triageSelIds().length;
+    var tFilters=[['all','すべて'],['メール取込','メール取込'],['FAX取込','FAX取込'],['注文書','注文書'],['見積書','見積書'],['納品書','納品書'],['none','タグなし']];
+    h+='<div class="modal-bg" onclick="closeTriage()"><div class="modal" onclick="event.stopPropagation()" style="max-width:720px"><div class="modal-head"><h2>待機の一括整理</h2><button class="close-btn" onclick="closeTriage()">&times;</button></div><div style="padding:14px 22px">';
+    h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">'+tFilters.map(function(f){var on=(S.triageFilter||'all')===f[0];return '<button onclick="triageSetFilter(\''+f[0]+'\')" style="font-size:11px;padding:5px 12px;border-radius:14px;border:1px solid '+(on?'var(--ac)':'var(--bd)')+';background:'+(on?'var(--ac2)':'var(--bg)')+';color:'+(on?'var(--ac)':'var(--tx2)')+';cursor:pointer;font-weight:600">'+f[1]+'</button>'}).join('')+'</div>';
+    h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">';
+    h+='<button onclick="triageToggleAll()" style="font-size:11px;padding:6px 12px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer">全選択/解除</button>';
+    h+='<span style="font-size:12px;color:var(--tx3)">'+tSelCount+'件選択中 / '+tItems.length+'件表示</span>';
+    h+='<div style="flex:1"></div>';
+    h+='<select id="triageStatusSel" style="padding:6px 10px;border:1px solid var(--bd);border-radius:8px;font-size:12px;background:var(--bg);color:var(--tx)">'+["検討中","見積済","製造中","完了","その他"].map(function(s){return '<option>'+s+'</option>'}).join('')+'</select>';
+    h+='<button onclick="triageApplyStatus()" style="font-size:12px;padding:7px 14px;border-radius:8px;border:none;background:var(--ac);color:#fff;font-weight:600;cursor:pointer">変更</button>';
+    h+='<button onclick="triageDelete()" style="font-size:12px;padding:7px 14px;border-radius:8px;border:1px solid var(--rd);background:var(--bg);color:var(--rd);font-weight:600;cursor:pointer">削除</button>';
+    h+='</div>';
+    if(!tItems.length){
+      h+='<div style="background:var(--bg2);border:1px dashed var(--bd);border-radius:var(--r);padding:24px;text-align:center;color:var(--tx3);font-size:13px">該当する待機図面はありません</div>';
+    }else{
+      h+='<div style="max-height:52vh;overflow-y:auto;border:1px solid var(--bd);border-radius:8px">';
+      tItems.forEach(function(d){
+        var sel=!!S.triageSel[d.id];
+        h+='<div onclick="triageToggle('+d.id+')" style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--bd);cursor:pointer;background:'+(sel?'var(--ac2)':'var(--bg)')+'">';
+        h+='<input type="checkbox" '+(sel?'checked':'')+' onclick="event.stopPropagation();triageToggle('+d.id+')" style="flex-shrink:0">';
+        h+='<div style="width:44px;flex-shrink:0">'+thumb(d,40)+'</div>';
+        h+='<div style="min-width:0;flex:1"><div style="font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(d.number)+' <span style="font-weight:400;color:var(--tx2)">'+esc(d.name)+'</span></div>';
+        h+='<div style="font-size:10px;color:var(--tx3)">'+esc(d.client||'')+' ／ '+esc(d.date||'')+' '+(d.tags||[]).map(function(t){return '<span style="background:var(--bg2);border-radius:6px;padding:0 6px;margin-left:2px">'+esc(t)+'</span>'}).join('')+'</div></div>';
+        h+='<button onclick="event.stopPropagation();closeTriage();openDetail('+d.id+')" style="font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer;flex-shrink:0">詳細</button>';
+        h+='</div>';
+      });
+      h+='</div>';
+    }
+    h+='</div></div></div>';
+  }
+
+  // 削除済み（ゴミ箱）モーダル
+  if(S.trashOpen){
+    h+='<div class="modal-bg" onclick="closeTrash()"><div class="modal" onclick="event.stopPropagation()" style="max-width:640px"><div class="modal-head"><h2>🗑 削除済み（'+TRASH.length+'件）</h2><button class="close-btn" onclick="closeTrash()">&times;</button></div><div style="padding:14px 22px">';
+    h+='<div style="font-size:11px;color:var(--tx3);margin-bottom:10px">削除から'+TRASH_KEEP_DAYS+'日経過すると自動的に完全削除されます。</div>';
+    if(!TRASH.length){
+      h+='<div style="background:var(--bg2);border:1px dashed var(--bd);border-radius:var(--r);padding:24px;text-align:center;color:var(--tx3);font-size:13px">削除済みの図面はありません</div>';
+    }else{
+      h+='<div style="max-height:56vh;overflow-y:auto;border:1px solid var(--bd);border-radius:8px">';
+      TRASH.forEach(function(t,idx){
+        var d=t.d||{};
+        var daysLeft=Math.max(0,TRASH_KEEP_DAYS-Math.floor((Date.now()-t.deletedAt)/86400000));
+        h+='<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--bd)">';
+        h+='<div style="min-width:0;flex:1"><div style="font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(d.number||'')+' <span style="font-weight:400;color:var(--tx2)">'+esc(d.name||'')+'</span></div>';
+        h+='<div style="font-size:10px;color:var(--tx3)">'+esc(d.client||'')+' ／ 削除: '+new Date(t.deletedAt).toLocaleDateString()+'（残り'+daysLeft+'日）</div></div>';
+        h+='<button onclick="restoreFromTrash('+idx+')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:none;background:#1B8C65;color:#fff;font-weight:600;cursor:pointer;flex-shrink:0">復元</button>';
+        h+='<button onclick="purgeTrashEntry('+idx+')" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid var(--rd);background:var(--bg);color:var(--rd);cursor:pointer;flex-shrink:0">完全削除</button>';
+        h+='</div>';
+      });
+      h+='</div>';
+    }
+    h+='</div></div></div>';
+  }
 
   // EDIT MODAL
   if(S.editOpen&&S.editDwg){var ed=S.editDwg;
@@ -4302,26 +4370,111 @@ function yayoiMatchCardHTML(){
   h+='</div>';return h;
 }
 
+// ===== ゴミ箱（ソフトデリート） =====
+// 削除された図面はTRASHに30日保持され、その間は復元できる。画像データも保持したままにする。
+var TRASH_KEEP_DAYS=30;
+function moveToTrash(ids){
+  var now=Date.now();
+  var by=(typeof AUTH_USER!=='undefined'&&AUTH_USER&&AUTH_USER.email)||'';
+  var idSet={};ids.forEach(function(i){idSet[i]=1});
+  DRAWINGS.forEach(function(d){if(idSet[d.id])TRASH.unshift({d:d,deletedAt:now,deletedBy:by});});
+  DRAWINGS=DRAWINGS.filter(function(d){return !idSet[d.id]});
+}
+// 完全削除（ローカルキャッシュ・IndexedDB・Firestoreの画像ドキュメントも消す）
+function hardDeleteImages(id){
+  delete scannedImages[id];delete scannedPdfs[id];delete scannedBlobUrls[id];delete pdfThumbnails[id];
+  deleteImageStorage(id);
+  if(fbEnabled){
+    fbDB.collection('workspaces').doc('default').collection('images').doc(String(id)).delete()
+      .catch(function(e){console.warn('trash image purge failed:',e.message);});
+  }
+}
+// 30日経過エントリの自動掃除（1セッション1回だけ実行）
+function purgeOldTrash(){
+  if(window._trashPurged)return;
+  window._trashPurged=true;
+  var cutoff=Date.now()-TRASH_KEEP_DAYS*24*3600*1000;
+  var old=TRASH.filter(function(t){return t.deletedAt<cutoff});
+  if(!old.length)return;
+  old.forEach(function(t){hardDeleteImages(t.d.id);});
+  TRASH=TRASH.filter(function(t){return t.deletedAt>=cutoff});
+  saveAll(true);
+}
+function restoreFromTrash(idx){
+  var t=TRASH[idx];if(!t)return;
+  if(DRAWINGS.some(function(d){return d.id===t.d.id})){alert('同じIDの図面が既に存在するため復元できません');return;}
+  DRAWINGS.unshift(t.d);
+  TRASH.splice(idx,1);
+  saveAll();render();
+  toast('「'+(t.d.number||t.d.name)+'」を復元しました');
+}
+function purgeTrashEntry(idx){
+  var t=TRASH[idx];if(!t)return;
+  if(!confirm('「'+(t.d.number||'')+' '+(t.d.name||'')+'」を完全に削除しますか？\nこの操作は元に戻せません。'))return;
+  hardDeleteImages(t.d.id);
+  TRASH.splice(idx,1);
+  saveAll(true);render();
+}
+function openTrash(){S.trashOpen=true;render();}
+function closeTrash(){S.trashOpen=false;render();}
+
 function delByStatus(status){
   var targets=DRAWINGS.filter(function(d){return d.status===status});
   if(targets.length===0){alert('「'+status+'」の図面はありません');return;}
-  if(!confirm('「'+status+'」の図面を '+targets.length+' 件すべて削除しますか？\nこの操作は元に戻せません。'))return;
-  targets.forEach(function(d){
-    var id=d.id;
-    delete scannedImages[id];delete scannedPdfs[id];delete scannedBlobUrls[id];delete pdfThumbnails[id];
-    deleteImageStorage(id);
-  });
-  DRAWINGS=DRAWINGS.filter(function(d){return d.status!==status});
+  if(!confirm('「'+status+'」の図面を '+targets.length+' 件すべて削除しますか？\n（削除後'+TRASH_KEEP_DAYS+'日間は「削除済み」から復元できます）'))return;
+  moveToTrash(targets.map(function(d){return d.id}));
   S.detail=null;saveAll();render();
-  alert(targets.length+' 件を削除しました。');
+  alert(targets.length+' 件を削除しました（「削除済み」から復元可能）。');
 }
 
 function delDrawing(id){
-  if(!confirm('この図面を削除しますか？'))return;
-  DRAWINGS=DRAWINGS.filter(function(d){return d.id!==id});
-  delete scannedImages[id];delete scannedPdfs[id];delete scannedBlobUrls[id];delete pdfThumbnails[id];
-  deleteImageStorage(id);
+  if(!confirm('この図面を削除しますか？\n（削除後'+TRASH_KEEP_DAYS+'日間は「削除済み」から復元できます）'))return;
+  moveToTrash([id]);
   S.detail=null;saveAll();render();
+}
+
+// ===== 待機の一括整理 =====
+function openTriage(){S.triageOpen=true;S.triageFilter='all';S.triageSel={};render();}
+function closeTriage(){S.triageOpen=false;S.triageSel={};render();}
+function triageSetFilter(f){S.triageFilter=f;render();}
+function triageItems(){
+  var f=S.triageFilter||'all';
+  return DRAWINGS.filter(function(d){
+    if(d.status!=='待機')return false;
+    var tags=d.tags||[];
+    if(f==='all')return true;
+    if(f==='none')return tags.length===0;
+    return tags.indexOf(f)>=0;
+  });
+}
+function triageToggle(id){if(S.triageSel[id])delete S.triageSel[id];else S.triageSel[id]=true;render();}
+function triageToggleAll(){
+  var items=triageItems();
+  var allSel=items.length>0&&items.every(function(d){return S.triageSel[d.id]});
+  if(allSel)items.forEach(function(d){delete S.triageSel[d.id]});
+  else items.forEach(function(d){S.triageSel[d.id]=true});
+  render();
+}
+function triageSelIds(){return Object.keys(S.triageSel||{}).map(Number);}
+function triageApplyStatus(){
+  var ids=triageSelIds();if(!ids.length){alert('図面を選択してください');return;}
+  var sel=document.getElementById('triageStatusSel');
+  var target=sel?sel.value:'';if(!target)return;
+  ids.forEach(function(id){
+    var d=DRAWINGS.find(function(x){return x.id===id});
+    if(d){d.status=target;markStatusEdit(id,target,d.lastAccess);}
+  });
+  S.triageSel={};
+  saveAll(true);render();
+  toast(ids.length+'件を「'+target+'」に変更しました');
+}
+function triageDelete(){
+  var ids=triageSelIds();if(!ids.length){alert('図面を選択してください');return;}
+  if(!confirm('選択した '+ids.length+' 件を削除しますか？\n（削除後'+TRASH_KEEP_DAYS+'日間は「削除済み」から復元できます）'))return;
+  moveToTrash(ids);
+  S.triageSel={};
+  saveAll();render();
+  toast(ids.length+'件を削除しました');
 }
 
 function printDetail(id){

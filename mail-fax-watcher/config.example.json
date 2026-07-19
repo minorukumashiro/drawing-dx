@@ -6,6 +6,10 @@
     "mailInboxFolder": "C:\\DrawingWatch\\mail-inbox",
     "faxFolder": "\\\\192.168.100.232\\fax"
   },
+  "backup": {
+    "dir": "\\\\LS220DB63\\share\\dxp-backup",
+    "keepGenerations": 30
+  },
   "allowedExtensions": [".pdf", ".png", ".jpg", ".jpeg"],
   "excludeNonDrawingDocsByFilename": false,
   "skipNonWorkImages": true,

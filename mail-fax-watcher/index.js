@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 
 const state = require('./lib/state');
+const backup = require('./lib/backup');
 const { requiredIntervalMinutes } = require('./lib/holidays');
 const { listCandidates, dedupKey } = require('./lib/scanFolder');
 const { detectNonDrawingDoc } = require('./lib/detectNonDrawing');
@@ -125,6 +126,24 @@ function ensureDir(p) {
   if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
 }
 
+// 1日1回、Firestore全データをNASへバックアップする（config.backup 未設定なら何もしない）。
+// 成否を返す（healthに記録し、アプリ側で失敗バナーを出せるようにする）。
+async function maybeRunBackup(cfg, st) {
+  if (!cfg.backup || !cfg.backup.dir) return true;
+  const today = new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD (JST)
+  if (st.lastBackupDate === today) return true;
+  try {
+    const db = fbSync.initFirestore(cfg.firebase.serviceAccountKeyPath);
+    await backup.runBackup(db, cfg, st, log);
+    st.lastBackupDate = today;
+    state.save(st);
+    return true;
+  } catch (e) {
+    log(`⚠ バックアップ失敗: ${e.message}`);
+    return false;
+  }
+}
+
 // 実行結果を Firestore の watcher_health に記録する（失敗しても本処理には影響させない）
 async function reportHealth(cfg, payload) {
   try {
@@ -232,7 +251,8 @@ async function main() {
     log('新規ファイルなし');
     st.lastRun = now.toISOString();
     state.save(st);
-    await reportHealth(cfg, { lastRunAt: now.toISOString(), lastSuccessAt: now.toISOString(), okCount: 0, ngCount: 0, lastError: null, mailFolderOk: mailFolderOk, faxFolderOk: faxFolderOk });
+    const backupOk = await maybeRunBackup(cfg, st);
+    await reportHealth(cfg, { lastRunAt: now.toISOString(), lastSuccessAt: now.toISOString(), okCount: 0, ngCount: 0, lastError: null, mailFolderOk: mailFolderOk, faxFolderOk: faxFolderOk, backupOk: backupOk });
     return;
   }
 
@@ -268,7 +288,8 @@ async function main() {
   st.lastRun = now.toISOString();
   state.save(st);
   log(`完了: 成功${okCount}件 / 失敗・再試行待ち${ngCount}件`);
-  await reportHealth(cfg, { lastRunAt: now.toISOString(), lastSuccessAt: now.toISOString(), okCount: okCount, ngCount: ngCount, lastError: null, mailFolderOk: mailFolderOk, faxFolderOk: faxFolderOk });
+  const backupOk = await maybeRunBackup(cfg, st);
+  await reportHealth(cfg, { lastRunAt: now.toISOString(), lastSuccessAt: now.toISOString(), okCount: okCount, ngCount: ngCount, lastError: null, mailFolderOk: mailFolderOk, faxFolderOk: faxFolderOk, backupOk: backupOk });
 }
 
 main().catch(async (e) => {
