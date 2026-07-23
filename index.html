@@ -208,6 +208,9 @@ var fbApp=null,fbDB=null,fbEnabled=false,fbSyncing=false,fbUnsubscribe=null,fbLa
 var pendingStatusEdits={}; // id -> {status, lastAccess, until}
 var PENDING_STATUS_TTL=30000;
 function markStatusEdit(id,status,lastAccess){pendingStatusEdits[String(id)]={status:status,lastAccess:lastAccess,until:Date.now()+PENDING_STATUS_TTL};}
+// 直近のローカル削除を一定時間優先する（他端末/ウォッチャーの古いデータで待機案件が復活＝削除失敗 を防ぐ）
+var pendingDeletes={}; // id -> {num, until}  num=図番（id再利用による別案件の誤削除を防ぐ照合用）
+function markDeleteEdit(id,num){pendingDeletes[String(id)]={num:num||'',until:Date.now()+PENDING_STATUS_TTL};}
 // Force re-sync all images on first push after this version (better quality)
 window._fbSyncedImages={};
 
@@ -864,6 +867,24 @@ function fbStartListener(){
     if(data.annotations)ANNOTATIONS=data.annotations;
     if(data.worklogs)WORKLOGS=data.worklogs;
     if(data.trash)TRASH=data.trash;
+    // 直近のローカル削除を再主張: 受信データ(DRAWINGS/TRASH上書き後)に削除済み案件が復活していたら
+    // 再削除してゴミ箱へ戻し、サーバーに押し返す（待機の削除が競合で戻る問題の対策）
+    var _delReassert=false,_dnow=Date.now();
+    Object.keys(pendingDeletes).forEach(function(pid){
+      var pe=pendingDeletes[pid];
+      if(!pe||pe.until<_dnow){delete pendingDeletes[pid];return;}
+      var idx=-1;for(var _i=0;_i<DRAWINGS.length;_i++){if(String(DRAWINGS[_i].id)===pid){idx=_i;break;}}
+      if(idx<0)return; // 復活していない＝削除は効いている
+      var cur=DRAWINGS[idx];
+      // id再利用で別案件が入っている場合は誤削除しない（図番が一致する時だけ再削除）
+      if((cur.number||'')!==(pe.num||''))return;
+      DRAWINGS.splice(idx,1);
+      if(!TRASH.some(function(t){return t.d&&String(t.d.id)===pid;})){
+        TRASH.unshift({d:cur,deletedAt:Date.now(),deletedBy:(typeof AUTH_USER!=='undefined'&&AUTH_USER&&AUTH_USER.email)||''});
+      }
+      _delReassert=true;
+    });
+    if(_delReassert){fbLastLocalChange=Date.now();clearTimeout(window._fbSyncTimer);window._fbSyncTimer=setTimeout(function(){fbPushAll(true);},800);}
     if(data.nextId)nextId=Math.max(nextId,data.nextId);
     // 30日経過したゴミ箱エントリの自動完全削除（1セッション1回）
     purgeOldTrash();
@@ -4377,7 +4398,7 @@ function moveToTrash(ids){
   var now=Date.now();
   var by=(typeof AUTH_USER!=='undefined'&&AUTH_USER&&AUTH_USER.email)||'';
   var idSet={};ids.forEach(function(i){idSet[i]=1});
-  DRAWINGS.forEach(function(d){if(idSet[d.id])TRASH.unshift({d:d,deletedAt:now,deletedBy:by});});
+  DRAWINGS.forEach(function(d){if(idSet[d.id]){TRASH.unshift({d:d,deletedAt:now,deletedBy:by});markDeleteEdit(d.id,d.number);}});
   DRAWINGS=DRAWINGS.filter(function(d){return !idSet[d.id]});
 }
 // 完全削除（ローカルキャッシュ・IndexedDB・Firestoreの画像ドキュメントも消す）
@@ -4403,6 +4424,7 @@ function purgeOldTrash(){
 function restoreFromTrash(idx){
   var t=TRASH[idx];if(!t)return;
   if(DRAWINGS.some(function(d){return d.id===t.d.id})){alert('同じIDの図面が既に存在するため復元できません');return;}
+  delete pendingDeletes[String(t.d.id)]; // 復元するので「削除の再主張」を解除（再削除されないように）
   DRAWINGS.unshift(t.d);
   TRASH.splice(idx,1);
   saveAll();render();
