@@ -634,6 +634,7 @@ function fbPushAll(skipImages){
 async function fbPushImages(){
   if(!fbEnabled)return;
   _imgSyncFailCount=0; // この回のpushでの失敗数（終了時にまとめて通知）
+  _imgSyncFailIds=[];
   var allIds=Object.keys(scannedImages).concat(Object.keys(scannedPdfs));
   // Dedupe
   var seen={};
@@ -679,6 +680,21 @@ async function fbPushImages(){
         doc.thumb=thumb;
       }
 
+      // 【重要】個別チェックだけでは image+pdf+thumb の合計が Firestore の1ドキュメント1MB制限
+      // (1,048,576バイト)を超えることがあり、その場合 set() が毎回拒否され永久に同期失敗し続ける。
+      // 実制限にオーバーヘッド余裕を見た閾値を超える場合のみ、収まるまで段階的に落とす:
+      // ①PDFを外す → ②画像を残り容量まで再圧縮 → ③サムネのみ
+      var TOTAL_MAX=1020*1024;
+      var _total=function(o){return (o.image?o.image.length:0)+(o.pdf?o.pdf.length:0)+(o.thumb?o.thumb.length:0);};
+      if(_total(doc)>TOTAL_MAX&&doc.pdf&&(doc.image||doc.thumb)){delete doc.pdf;}
+      if(_total(doc)>TOTAL_MAX&&doc.image){
+        var _room=TOTAL_MAX-(doc.thumb?doc.thumb.length:0)-(doc.pdf?doc.pdf.length:0);
+        var _rec=_room>50*1024?await compressImageForSync(doc.image,_room):null;
+        if(_rec)doc.image=_rec;
+        else if(doc.thumb)delete doc.image;
+      }
+      if(_total(doc)>TOTAL_MAX&&doc.thumb){delete doc.image;delete doc.pdf;}
+
       if(Object.keys(doc).length<=1)continue;
 
       await fbDB.collection('workspaces').doc('default').collection('images').doc(String(id)).set(doc);
@@ -695,15 +711,24 @@ async function fbPushImages(){
     }catch(e){
       console.warn('Image sync failed for id',id,':',e.message);
       _imgSyncFailCount++;
+      _imgSyncFailIds.push(id);
     }
   }
-  // 失敗があればまとめて1回だけ通知（_fbSyncedImages未更新のため次回pushで自動再試行される）
+  // 失敗があれば通知（_fbSyncedImages未更新のため次回pushで自動再試行される）。
+  // ただし同じ画像の失敗を毎回トーストするとうるさいので、このセッションで
+  // 初めて失敗した画像がある時だけ表示する（既知の失敗の繰り返しはconsoleのみ）。
   if(_imgSyncFailCount>0){
-    var fc=_imgSyncFailCount;
-    try{toast('⚠ 図面画像 '+fc+'件のクラウド同期に失敗しました（次回保存時に自動再試行）');}catch(e){}
+    if(!window._imgSyncNotifiedIds)window._imgSyncNotifiedIds={};
+    var _hasNew=_imgSyncFailIds.some(function(fid){return !window._imgSyncNotifiedIds[fid]});
+    _imgSyncFailIds.forEach(function(fid){window._imgSyncNotifiedIds[fid]=1});
+    if(_hasNew){
+      var fc=_imgSyncFailCount;
+      try{toast('⚠ 図面画像 '+fc+'件のクラウド同期に失敗しました（次回保存時に自動再試行）');}catch(e){}
+    }
   }
 }
 var _imgSyncFailCount=0;
+var _imgSyncFailIds=[];
 
 // Compress an image dataUrl to fit within target bytes while preserving as much quality as possible
 function compressImageForSync(dataUrl,targetBytes){
