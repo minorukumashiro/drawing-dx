@@ -2886,8 +2886,16 @@ function jissekiPriceStats(results){
 }
 
 // Firestore yayoiRecords を読み取り専用で検索する（書き込みは一切行わない）。
-// 径が分かっている場合は、対象径から見て「近い順」に上下両方向へ範囲クエリを2本投げてマージする
-// （単純な昇順1本だと、範囲内の件数が多い場合に肝心の近傍が取得できないため）。
+//
+// 2026-07-25修正: 当初は対象径から見て上下両方向へ範囲クエリ(各limit150)を投げてマージする設計
+// だったが、実データで「同一径ちょうどのレコードがlimit件数を超える」ケース（φ60が241件等、
+// 業種柄よくある）で、範囲クエリの暗黙の副次ソート(ドキュメントID昇順/降順)がID内に埋め込んだ日付を
+// そのままなぞってしまい、片方向の150件が特定の年代（例: 古い方だけ）で埋まり切ってしまい、
+// 残り（例: 2011年以降のφ60ちょうどのレコード）が一切取得されない不具合があった
+// （及川鉄工のφ60 ALHで2012年以降の実績が出てこないバグとして報告・特定）。
+// 対策として「径がちょうど一致」を専用クエリで別途まとめて取得し（等価条件のみなので
+// 複合インデックス不要、日付に関係なく丸ごと取れる）、それとは別に「近いが一致はしない」範囲を
+// 少なめのlimitで上下から補う3クエリ構成にした。
 async function fetchYayoiCandidates(query,toleranceRatio){
   if(!fbDB)return[];
   var col=fbDB.collection('yayoiRecords');
@@ -2899,10 +2907,11 @@ async function fetchYayoiCandidates(query,toleranceRatio){
     var thr=1-2*toleranceRatio;
     var lo=query.diameterMm*thr,hi=query.diameterMm/thr;
     var base=matRecognized?col.where('material','==',matRecognized):col;
-    var qUp=base.where('diameterMm','>=',query.diameterMm).where('diameterMm','<=',hi).orderBy('diameterMm','asc').limit(150);
-    var qDown=base.where('diameterMm','>=',lo).where('diameterMm','<',query.diameterMm).orderBy('diameterMm','desc').limit(150);
-    var res=await Promise.all([qUp.get(),qDown.get()]);
-    pushSnap(res[0]);pushSnap(res[1]);
+    var qExact=base.where('diameterMm','==',query.diameterMm).limit(300);
+    var qUp=base.where('diameterMm','>',query.diameterMm).where('diameterMm','<=',hi).orderBy('diameterMm','asc').limit(75);
+    var qDown=base.where('diameterMm','>=',lo).where('diameterMm','<',query.diameterMm).orderBy('diameterMm','desc').limit(75);
+    var res=await Promise.all([qExact.get(),qUp.get(),qDown.get()]);
+    pushSnap(res[0]);pushSnap(res[1]);pushSnap(res[2]);
   }else if(matRecognized){
     pushSnap(await col.where('material','==',matRecognized).limit(300).get());
   }else if(query.client){
