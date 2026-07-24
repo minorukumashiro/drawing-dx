@@ -134,8 +134,9 @@ async function maybeRunBackup(cfg, st) {
   if (st.lastBackupDate === today) return true;
   try {
     const db = fbSync.initFirestore(cfg.firebase.serviceAccountKeyPath);
-    await backup.runBackup(db, cfg, st, log);
+    const r = await backup.runBackup(db, cfg, st, log);
     st.lastBackupDate = today;
+    if (typeof r.mainDocSizeKB === 'number') st.mainDocSizeKB = r.mainDocSizeKB; // healthで毎回報告する用
     state.save(st);
     return true;
   } catch (e) {
@@ -252,7 +253,7 @@ async function main() {
     st.lastRun = now.toISOString();
     state.save(st);
     const backupOk = await maybeRunBackup(cfg, st);
-    await reportHealth(cfg, { lastRunAt: now.toISOString(), lastSuccessAt: now.toISOString(), okCount: 0, ngCount: 0, lastError: null, mailFolderOk: mailFolderOk, faxFolderOk: faxFolderOk, backupOk: backupOk });
+    await reportHealth(cfg, { lastRunAt: now.toISOString(), lastSuccessAt: now.toISOString(), okCount: 0, ngCount: 0, lastError: null, mailFolderOk: mailFolderOk, faxFolderOk: faxFolderOk, backupOk: backupOk, mainDocSizeKB: st.mainDocSizeKB || null });
     return;
   }
 
@@ -289,7 +290,7 @@ async function main() {
   state.save(st);
   log(`完了: 成功${okCount}件 / 失敗・再試行待ち${ngCount}件`);
   const backupOk = await maybeRunBackup(cfg, st);
-  await reportHealth(cfg, { lastRunAt: now.toISOString(), lastSuccessAt: now.toISOString(), okCount: okCount, ngCount: ngCount, lastError: null, mailFolderOk: mailFolderOk, faxFolderOk: faxFolderOk, backupOk: backupOk });
+  await reportHealth(cfg, { lastRunAt: now.toISOString(), lastSuccessAt: now.toISOString(), okCount: okCount, ngCount: ngCount, lastError: null, mailFolderOk: mailFolderOk, faxFolderOk: faxFolderOk, backupOk: backupOk, mainDocSizeKB: st.mainDocSizeKB || null });
 }
 
 main().catch(async (e) => {

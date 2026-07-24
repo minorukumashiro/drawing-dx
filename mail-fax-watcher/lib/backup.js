@@ -23,14 +23,17 @@ async function runBackup(db, cfg, st, log) {
   const docsDir = path.join(root, 'docs');
   ensureDir(metaDir); ensureDir(imagesDir); ensureDir(docsDir);
 
-  const result = { metaOk: false, images: 0, docs: 0 };
+  const result = { metaOk: false, images: 0, docs: 0, mainDocSizeKB: null };
 
   // 1) メタデータ全体のスナップショット（日次・世代管理）
   const snap = await db.collection('workspaces').doc('default').get();
   if (!snap.exists) throw new Error('workspaces/default が存在しません');
+  const plain = toPlain(snap.data());
+  // メインドキュメントのサイズ(KB)。Firestoreの1MB/doc制限への接近を監視する（アプリ側でバナー警告）
+  result.mainDocSizeKB = Math.round(JSON.stringify(plain).length / 1024);
   const today = new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD (ローカル=JST)
   const metaPath = path.join(metaDir, `dxp_meta_${today}.json`);
-  fs.writeFileSync(metaPath, JSON.stringify({ backedUpAt: new Date().toISOString(), data: toPlain(snap.data()) }));
+  fs.writeFileSync(metaPath, JSON.stringify({ backedUpAt: new Date().toISOString(), data: plain }));
   result.metaOk = true;
 
   // 世代整理: dxp_meta_*.json を新しい順に keep 件残して削除
@@ -66,7 +69,7 @@ async function runBackup(db, cfg, st, log) {
     result.docs++;
   }
 
-  log(`バックアップ完了: meta=${today}.json / 画像 ${result.images}件更新 / 書類 ${result.docs}件追加 (保存先 ${root})`);
+  log(`バックアップ完了: meta=${today}.json (${result.mainDocSizeKB}KB/1024KB) / 画像 ${result.images}件更新 / 書類 ${result.docs}件追加 (保存先 ${root})`);
   return result;
 }
 

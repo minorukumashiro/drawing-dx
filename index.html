@@ -781,6 +781,7 @@ function checkWatcherHealth(){
     if(d.faxFolderOk===false)msgs.push('FAX共有フォルダに接続できません');
     if(d.mailFolderOk===false)msgs.push('メール監視フォルダが見つかりません');
     if(d.backupOk===false)msgs.push('日次バックアップに失敗しています（NAS接続を確認）');
+    if(typeof d.mainDocSizeKB==='number'&&d.mainDocSizeKB>700)msgs.push('データ量が同期上限に接近しています（'+d.mainDocSizeKB+'KB/1024KB）。古い図面のアーカイブ等の対策が必要です');
     if(!msgs.length)return;
     var el=document.createElement('div');
     el.style.cssText='position:fixed;top:0;left:0;right:0;z-index:9999;background:#B3261E;color:#fff;padding:10px 44px 10px 16px;font-size:12px;font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,0.3);line-height:1.6';
