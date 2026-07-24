@@ -1,0 +1,35 @@
+{
+  "_comment": "このファイルを config.json にコピーして、環境に合わせて書き換えてください（config.json は.gitignore対象）",
+
+  "serviceAccountKeyPath": "../mail-fax-watcher/serviceAccountKey.json",
+
+  "_comment_yayoiFiles": "弥生販売25「元帳印刷」→「エクスポート」で出力した得意先元帳/仕入先元帳のテキスト(.txt)ファイル。1ファイル=1取引先が基本。詳細はREADME.md参照",
+  "yayoiFiles": [
+    { "path": "./data/得意先元帳_例.txt", "type": "customer" },
+    { "path": "./data/仕入先元帳_例.txt", "type": "supplier" }
+  ],
+
+  "_comment_yayoiFieldIndex": "実データの列位置が想定と違う場合だけ上書きしてください（既定値はlib/yayoiSource.jsのDEFAULT_FIELD_INDEXと同じ）",
+  "yayoiFieldIndex": {
+    "date": 3,
+    "voucherNo": 4,
+    "voucherKubun": 5,
+    "partnerCode": 10,
+    "lineNo": 13,
+    "lineKubun": 14,
+    "description": 17,
+    "unit": 19,
+    "quantity": 23,
+    "unitPrice": 24,
+    "amount": 25,
+    "quoteNo": 30,
+    "partnerName": 39
+  },
+
+  "_comment_yayoiItemVoucherKubuns": "商品/取引の実明細を含む伝票種別(yayoiFieldIndex.voucherKubunの値)。既定は仕入伝票14・売上伝票24。支払/入金伝票(13/23)は含めない",
+  "yayoiItemVoucherKubuns": ["14", "24"],
+
+  "defaultToleranceRatio": 0.2,
+  "defaultTop": 15,
+  "defaultMinScore": 40
+}

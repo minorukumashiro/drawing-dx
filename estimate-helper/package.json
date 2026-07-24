@@ -1,0 +1,22 @@
+{
+  "name": "estimate-helper",
+  "version": "1.0.0",
+  "description": "図面DXプラットフォーム（Firestore）と弥生販売の元帳エクスポートを横断して、類似の過去実績から見積単価の目安を出すCLIツール",
+  "main": "bin/estimate.js",
+  "bin": {
+    "estimate": "bin/estimate.js"
+  },
+  "scripts": {
+    "start": "node bin/estimate.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "firebase-admin": "^14.1.0",
+    "iconv-lite": "^0.6.3"
+  }
+}

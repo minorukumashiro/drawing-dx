@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "yayoiRecords",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "material", "order": "ASCENDING" },
+        { "fieldPath": "diameterMm", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
