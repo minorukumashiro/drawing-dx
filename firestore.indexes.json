@@ -7,6 +7,14 @@
         { "fieldPath": "material", "order": "ASCENDING" },
         { "fieldPath": "diameterMm", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "yayoiRecords",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "material", "order": "ASCENDING" },
+        { "fieldPath": "diameterMm", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
