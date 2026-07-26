@@ -2893,29 +2893,43 @@ function jissekiPriceStats(results){
 // そのままなぞってしまい、片方向の150件が特定の年代（例: 古い方だけ）で埋まり切ってしまい、
 // 残り（例: 2011年以降のφ60ちょうどのレコード）が一切取得されない不具合があった
 // （及川鉄工のφ60 ALHで2012年以降の実績が出てこないバグとして報告・特定）。
-// 対策として「径がちょうど一致」を専用クエリで別途まとめて取得し（等価条件のみなので
-// 複合インデックス不要、日付に関係なく丸ごと取れる）、それとは別に「近いが一致はしない」範囲を
-// 少なめのlimitで上下から補う3クエリ構成にした。
+//
+// 2026-07-27再修正: 全877社分をインポートしたところ、径ちょうど一致が単独クエリのlimit(300)を
+// 大きく超えるケースが多数判明した（φ46が2045件、φ60でも924件など）。全社横断の「径ちょうど一致」
+// クエリ1本に頼ると、この規模ではどの道limitで頭打ちになり一部が取得できなくなる。
+// そこで「径ちょうど一致」を、絞り込み条件（得意先 / 材質）ごとに分けて取得する構成にした:
+//   - 得意先が分かっていれば「その得意先 × 径ちょうど一致」（1社分なので規模は小さく収まる）
+//   - 材質(JISコード)が分かっていれば「その材質 × 径ちょうど一致」（他社の同材質同径の相場比較用）
+//   - どちらも無い場合のみ、径ちょうど一致を無条件でlimit(300)取得（この場合のみ取得漏れが起こりうる）
+// これに加えて「近いが一致しない」範囲を上下それぞれ少なめのlimitで補う。
+// いずれの等価条件の組み合わせ(client+diameter, material+diameter)も複合インデックス不要で動作確認済み。
 async function fetchYayoiCandidates(query,toleranceRatio){
   if(!fbDB)return[];
   var col=fbDB.collection('yayoiRecords');
   var matRecognized=query.material&&JISSEKI_MATERIAL_RE.test(jissekiNormalizeMat(query.material))?jissekiNormalizeMat(query.material):null;
+  var clientNorm=query.client?jissekiNormalizeClient(query.client):null;
   var out=[],seen={};
   function pushSnap(snap){snap.forEach(function(doc){if(seen[doc.id])return;seen[doc.id]=true;var v=doc.data();v.source=v.source||'yayoi';v._id=doc.id;out.push(v);});}
 
   if(query.diameterMm!=null){
     var thr=1-2*toleranceRatio;
     var lo=query.diameterMm*thr,hi=query.diameterMm/thr;
-    var base=matRecognized?col.where('material','==',matRecognized):col;
-    var qExact=base.where('diameterMm','==',query.diameterMm).limit(300);
-    var qUp=base.where('diameterMm','>',query.diameterMm).where('diameterMm','<=',hi).orderBy('diameterMm','asc').limit(75);
-    var qDown=base.where('diameterMm','>=',lo).where('diameterMm','<',query.diameterMm).orderBy('diameterMm','desc').limit(75);
-    var res=await Promise.all([qExact.get(),qUp.get(),qDown.get()]);
-    pushSnap(res[0]);pushSnap(res[1]);pushSnap(res[2]);
+    var matBase=matRecognized?col.where('material','==',matRecognized):col;
+    var exactQueries=[];
+    if(clientNorm)exactQueries.push(col.where('clientNormalized','==',clientNorm).where('diameterMm','==',query.diameterMm).limit(300));
+    if(matRecognized)exactQueries.push(col.where('material','==',matRecognized).where('diameterMm','==',query.diameterMm).limit(300));
+    if(!clientNorm&&!matRecognized)exactQueries.push(col.where('diameterMm','==',query.diameterMm).limit(300));
+    var qUp=matBase.where('diameterMm','>',query.diameterMm).where('diameterMm','<=',hi).orderBy('diameterMm','asc').limit(75);
+    var qDown=matBase.where('diameterMm','>=',lo).where('diameterMm','<',query.diameterMm).orderBy('diameterMm','desc').limit(75);
+    var res=await Promise.all(exactQueries.map(function(q){return q.get()}).concat([qUp.get(),qDown.get()]));
+    res.forEach(pushSnap);
   }else if(matRecognized){
     pushSnap(await col.where('material','==',matRecognized).limit(300).get());
-  }else if(query.client){
-    pushSnap(await col.where('client','==',query.client).limit(300).get());
+  }else if(clientNorm){
+    // 図面DX側は取引先名を法人格無しで登録することが多く（例:「不二新製作所」）、弥生側は元帳の
+    // 正式名（例:「（有）不二新製作所」）で入っているため、client完全一致だと取れない
+    // （2026-07-27発覚）。import-to-firestore.jsが同じ正規化で書き出す clientNormalized で検索する
+    pushSnap(await col.where('clientNormalized','==',clientNorm).limit(300).get());
   }
   return out;
 }

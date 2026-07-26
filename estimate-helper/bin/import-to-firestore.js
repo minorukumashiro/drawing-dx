@@ -51,6 +51,15 @@ function initFirestore(serviceAccountKeyPath) {
   return getFirestore();
 }
 
+// 法人格表記・空白の差を吸収した比較用フィールド（index.html の jissekiNormalizeClient と同じ正規化）。
+// 図面DX側は取引先名を法人格無しで登録することが多く（例:「不二新製作所」）、弥生側は
+// 元帳の正式名（例:「（有）不二新製作所」）で入っているため、完全一致のFirestoreクエリだと
+// ヒットしない問題があった（2026-07-27発覚）。径・材質が未入力の図面（取込直後の待機図面等）は
+// 取引先名だけでyayoiRecordsを絞り込む必要があり、その際にこの正規化済みフィールドで検索する。
+function normalizeClientForMatch(s) {
+  return String(s || '').replace(/[\s　]/g, '').replace(/株式会社|（株）|\(株\)|㈱|有限会社|（有）|\(有\)|㈲/g, '');
+}
+
 // Firestoreドキュメントに保存するフィールドだけを抜き出す（rawの生配列は保存しない）
 function toDoc(rec) {
   return {
@@ -60,6 +69,7 @@ function toDoc(rec) {
     lineNo: rec.lineNo || '',
     date: rec.date || null,
     client: rec.client || '',
+    clientNormalized: normalizeClientForMatch(rec.client || ''),
     material: rec.material || '',
     diameterMm: rec.diameterMm != null ? rec.diameterMm : null,
     sizeRaw: rec.sizeRaw || '',
