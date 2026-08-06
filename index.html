@@ -211,8 +211,11 @@ function markStatusEdit(id,status,lastAccess){pendingStatusEdits[String(id)]={st
 // 直近のローカル削除を一定時間優先する（他端末/ウォッチャーの古いデータで待機案件が復活＝削除失敗 を防ぐ）
 var pendingDeletes={}; // id -> {num, until}  num=図番（id再利用による別案件の誤削除を防ぐ照合用）
 function markDeleteEdit(id,num){pendingDeletes[String(id)]={num:num||'',until:Date.now()+PENDING_STATUS_TTL};}
-// Force re-sync all images on first push after this version (better quality)
-window._fbSyncedImages={};
+// アップロード済み画像の記録（id -> バージョン文字列）。
+// 以前はセッション変数のみだったため、ページを開き直すたびに全画像を再アップロードしており、
+// メタデータの送信がその完了待ちで数分遅れていた（登録が他端末に届かない一因）。
+window._fbSyncedImages=(function(){try{return JSON.parse(localStorage.getItem('dxp_fbSyncedImages')||'{}')||{}}catch(e){return{}}})();
+function saveSyncedImageIndex(){try{localStorage.setItem('dxp_fbSyncedImages',JSON.stringify(window._fbSyncedImages));}catch(e){}}
 
 // ========== 自動JSONバックアップ ==========
 var _autoSaveHandle=null;
@@ -504,7 +507,23 @@ function migrateRelatedFilesToDocs(){
   });
   if(changed){relatedFiles={};dbPut('meta','relatedFiles',relatedFiles);}
 }
+// ローカル変更の通し番号。送信中に操作が入ったかの判定に使う。
+var _fbLocalRev=0;
+// IndexedDB への保存だけを行う（Firebase 送信をトリガーしない）
+function saveLocalOnly(){
+  dbPut('meta','drawings',DRAWINGS);
+  dbPut('meta','invoices',INVOICES);
+  dbPut('meta','deliveries',DELIVERIES);
+  dbPut('meta','masters',MASTERS);
+  dbPut('meta','inspections',inspectionReports);
+  dbPut('meta','relatedDocuments',relatedDocuments);
+  dbPut('meta','annotations',ANNOTATIONS);
+  dbPut('meta','worklogs',WORKLOGS);
+  dbPut('meta','trash',TRASH);
+  dbPut('meta','nextId',nextId);
+}
 function saveAll(skipImages){
+  _fbLocalRev++;
   // Save metadata to IndexedDB
   dbPut('meta','drawings',DRAWINGS);
   dbPut('meta','invoices',INVOICES);
@@ -570,6 +589,164 @@ function deduplicateInspections(){
   return changed;
 }
 
+// ========== 3方向マージ同期エンジン ========== [MERGE_ENGINE_START]
+// 【重要】以前は workspaces/default を丸ごと set() で上書きしていた。そのため少しでも
+// 古いデータを持った端末が保存すると、その間に他端末やメール/FAX自動取込が追加・変更した
+// 内容を巻き添えで消していた（登録・関連書類・ステータス変更が「元に戻る」の主因）。
+// 現在は「最後にサーバーから受け取った状態(fbBase)」を基準にした3方向マージを行う:
+//   ・自分が変更した項目/フィールドだけをサーバー側へ適用する
+//   ・自分が触っていない項目は必ずサーバーの値を残す
+//   ・自分が削除した項目だけを消す（他端末が追加したものは消さない）
+// 書き込みはトランザクション内で「読み直し→マージ→書き込み」するため、
+// 送信直前に他端末が入れた変更も失われない。
+var fbBase=null; // マージの基準（最後にサーバーから受け取った状態のコピー）
+function _fbJ(v){try{return JSON.stringify(v===undefined?null:v)}catch(e){return '__ERR__'}}
+function _fbClone(v){try{return v===undefined?v:JSON.parse(JSON.stringify(v))}catch(e){return v}}
+
+// オブジェクト1件のフィールド単位マージ。ローカルが基準から変えたフィールドだけを勝たせる。
+function fbMergeFields(sv,lv,bv){
+  if(!bv||typeof bv!=='object'||!sv||typeof sv!=='object')return _fbClone(lv);
+  var out=_fbClone(sv);
+  Object.keys(lv).forEach(function(k){
+    if(_fbJ(lv[k])===_fbJ(bv[k]))return;
+    if(lv[k]===undefined)delete out[k]; // undefined は Firestore が受け付けないため入れない
+    else out[k]=_fbClone(lv[k]);
+  });
+  Object.keys(bv).forEach(function(k){if(!(k in lv)&&(_fbJ(sv[k])===_fbJ(bv[k])))delete out[k];});
+  return out;
+}
+// キーを持つ配列の3方向マージ
+function fbMergeArray(serverArr,localArr,baseArr,keyFn){
+  serverArr=Array.isArray(serverArr)?serverArr:[];
+  localArr=Array.isArray(localArr)?localArr:[];
+  if(!Array.isArray(baseArr))return _fbClone(localArr); // 基準なし＝従来どおりローカル優先
+  var sMap={},bMap={},lSeen={},out=[];
+  serverArr.forEach(function(x){var k=keyFn(x);if(k!=null)sMap[k]=x;});
+  baseArr.forEach(function(x){var k=keyFn(x);if(k!=null)bMap[k]=x;});
+  localArr.forEach(function(x){var k=keyFn(x);if(k!=null)lSeen[k]=1;});
+  // 1) 自分が知らないうちに他端末が追加したもの（サーバーにのみ存在）を先頭に残す
+  serverArr.forEach(function(sv){var k=keyFn(sv);if(k==null)return;if(!lSeen[k]&&!(k in bMap))out.push(_fbClone(sv));});
+  // 2) ローカルの並び順で反映
+  localArr.forEach(function(lv){
+    var k=keyFn(lv);
+    if(k==null){out.push(_fbClone(lv));return;}
+    if(k in sMap)out.push(fbMergeFields(sMap[k],lv,bMap[k]));
+    else if(k in bMap){if(_fbJ(lv)!==_fbJ(bMap[k]))out.push(_fbClone(lv));} // 他端末が削除。ローカルで編集済みなら残す
+    else out.push(_fbClone(lv)); // ローカルで新規追加
+  });
+  return out;
+}
+// キー付きオブジェクト（id→値）の3方向マージ
+function fbMergeMap(sv,lv,bv,valueMerge){
+  sv=(sv&&typeof sv==='object')?sv:{};
+  lv=(lv&&typeof lv==='object')?lv:{};
+  if(!bv||typeof bv!=='object')return _fbClone(lv);
+  var out={};
+  Object.keys(sv).forEach(function(k){
+    if(k in lv)out[k]=valueMerge?valueMerge(sv[k],lv[k],bv[k]):(_fbJ(lv[k])!==_fbJ(bv[k])?_fbClone(lv[k]):_fbClone(sv[k]));
+    else if(!(k in bv))out[k]=_fbClone(sv[k]); // 他端末が追加
+    // 基準にあってローカルに無い＝自分が削除 → 落とす
+  });
+  Object.keys(lv).forEach(function(k){
+    if(k in sv)return;
+    if(k in bv){if(_fbJ(lv[k])!==_fbJ(bv[k]))out[k]=_fbClone(lv[k]);} // 他端末が削除。編集済みなら残す
+    else out[k]=_fbClone(lv[k]);
+  });
+  return out;
+}
+// 検査報告書 / 関連書類（図面id → ファイル配列）のマージ
+function fbMergeDocMap(sv,lv,bv){
+  return fbMergeMap(sv,lv,bv,function(s,l,b){
+    return fbMergeArray(s,l,Array.isArray(b)?b:[],function(x){return x&&x.fileId?String(x.fileId):null;});
+  });
+}
+// マスター（配列/オブジェクト混在）のマージ
+function fbMergeMasters(sv,lv,bv){
+  sv=sv||{};lv=lv||{};
+  if(!bv||typeof bv!=='object')return _fbClone(lv);
+  var out={},keys={};
+  Object.keys(sv).forEach(function(k){keys[k]=1;});Object.keys(lv).forEach(function(k){keys[k]=1;});
+  Object.keys(keys).forEach(function(k){
+    var s=sv[k],l=lv[k],b=bv[k];
+    if(!(k in lv)){if(!(k in bv))out[k]=_fbClone(s);return;}
+    if(Array.isArray(l))out[k]=fbMergeArray(Array.isArray(s)?s:[],l,Array.isArray(b)?b:[],function(x){return _fbJ(x);});
+    else if(l&&typeof l==='object')out[k]=fbMergeMap(s,l,(b&&typeof b==='object')?b:{});
+    else out[k]=(_fbJ(l)!==_fbJ(b))?_fbClone(l):_fbClone(s);
+  });
+  return out;
+}
+// サーバーの状態(server)にローカルの変更だけを重ねた「あるべき状態」を作る
+function fbMergePayload(server){
+  server=server||{};
+  var b=fbBase||{};
+  var byId=function(x){return (x&&x.id!=null)?String(x.id):null;};
+  return {
+    drawings:fbMergeArray(server.drawings,DRAWINGS,fbBase?b.drawings:null,byId),
+    trash:fbMergeArray(server.trash,TRASH,fbBase?b.trash:null,function(x){return (x&&x.d&&x.d.id!=null)?String(x.d.id):null;}),
+    worklogs:fbMergeArray(server.worklogs,WORKLOGS,fbBase?b.worklogs:null,byId),
+    deliveries:fbMergeArray(server.deliveries,DELIVERIES,fbBase?b.deliveries:null,byId),
+    invoices:fbMergeArray(server.invoices,INVOICES,fbBase?b.invoices:null,byId),
+    annotations:fbMergeMap(server.annotations,ANNOTATIONS,fbBase?b.annotations:null),
+    masters:fbMergeMasters(server.masters,MASTERS,fbBase?b.masters:null),
+    inspections:fbMergeDocMap(server.inspections,inspMeta(),fbBase?b.inspections:null),
+    relatedDocuments:fbMergeDocMap(server.relatedDocuments,relDocMeta(),fbBase?b.relatedDocuments:null),
+    nextId:Math.max(Number(server.nextId)||0,Number(nextId)||0)
+  };
+}
+// サーバー側の状態を次回マージの基準として記録する
+function fbSetBase(d){
+  d=d||{};
+  fbBase={
+    drawings:_fbClone(Array.isArray(d.drawings)?d.drawings:[]),
+    trash:_fbClone(Array.isArray(d.trash)?d.trash:[]),
+    worklogs:_fbClone(Array.isArray(d.worklogs)?d.worklogs:[]),
+    deliveries:_fbClone(Array.isArray(d.deliveries)?d.deliveries:[]),
+    invoices:_fbClone(Array.isArray(d.invoices)?d.invoices:[]),
+    annotations:_fbClone(d.annotations||{}),
+    masters:_fbClone(d.masters||{}),
+    inspections:_fbClone(d.inspections||{}),
+    relatedDocuments:_fbClone(d.relatedDocuments||{}),
+    nextId:Number(d.nextId)||0
+  };
+}
+// 図面id→ファイル配列 のメタ情報をローカルへ反映（ローカルの実体データ data は保持する）
+function fbApplyDocMap(target,meta){
+  if(!meta)return;
+  Object.keys(target).forEach(function(k){if(!(k in meta))delete target[k];});
+  Object.keys(meta).forEach(function(k){
+    var existing=target[k]||[];
+    var arr=(meta[k]||[]).map(function(r){
+      var local=r.fileId?existing.find(function(x){return x.fileId===r.fileId;}):null;
+      return{name:r.name,date:r.date,type:r.type,fileId:r.fileId||'',
+        data:(local&&local.data)||r.data||'',url:r.url||(local&&local.url)||''};
+    });
+    if(arr.length)target[k]=arr;else delete target[k];
+  });
+}
+// マージ結果をローカル状態へ反映
+function fbApplyMerged(m){
+  if(!m)return;
+  DRAWINGS=m.drawings||[];
+  DRAWINGS.forEach(function(d){if(d.status==='検図中')d.status='検討中';});
+  TRASH=m.trash||[];
+  WORKLOGS=m.worklogs||[];
+  DELIVERIES=m.deliveries||[];
+  INVOICES=m.invoices||[];
+  ANNOTATIONS=m.annotations||{};
+  if(m.masters)MASTERS=m.masters;
+  normalizeStatusMaster();
+  fbApplyDocMap(inspectionReports,m.inspections);
+  fbApplyDocMap(relatedDocuments,m.relatedDocuments);
+  nextId=Math.max(Number(nextId)||0,Number(m.nextId)||0);
+}
+function normalizeStatusMaster(){
+  if(!MASTERS.statuses)return;
+  var idx=MASTERS.statuses.indexOf('検図中');if(idx>=0)MASTERS.statuses[idx]='検討中';
+  if(MASTERS.statuses.indexOf('完了')<0){var _ni=MASTERS.statuses.indexOf('納品済');if(_ni>=0)MASTERS.statuses.splice(_ni,0,'完了');else MASTERS.statuses.push('完了');}
+  if(MASTERS.statuses.indexOf('待機')<0)MASTERS.statuses.unshift('待機');
+}
+// [MERGE_ENGINE_END]
+
 // ========== Firebase Sync Functions (metadata only, no images) ==========
 function inspMeta(){var r={};Object.keys(inspectionReports).forEach(function(id){r[id]=(inspectionReports[id]||[]).map(function(x){return{name:x.name,date:x.date,type:x.type,fileId:x.fileId||'',url:x.url||''};});});return r;}
 function relDocMeta(){var r={};Object.keys(relatedDocuments).forEach(function(id){r[id]=(relatedDocuments[id]||[]).map(function(x){return{name:x.name,date:x.date,type:x.type,fileId:x.fileId||'',url:x.url||''};});});return r;}
@@ -594,27 +771,12 @@ function fbPushAll(skipImages){
     if(isDefault)return;
   }
   updateSyncStatus('pushing');
-  function pushMeta(){
-    fbMetaSyncing=true;
-    var payload={
-      drawings:DRAWINGS,masters:MASTERS,inspections:inspMeta(),relatedDocuments:relDocMeta(),
-      invoices:INVOICES,annotations:ANNOTATIONS,deliveries:DELIVERIES,worklogs:WORKLOGS,trash:TRASH,nextId:nextId,
-      lastModified:firebase.firestore.FieldValue.serverTimestamp(),
-      lastClient:fbClientId()
-    };
-    fbDB.collection('workspaces').doc('default').set(payload).then(function(){
-      fbMetaSyncing=false;
-      updateSyncStatus('synced');
-    }).catch(function(e){
-      fbMetaSyncing=false;
-      updateSyncStatus('error',e.message);
-      console.error('Firebase push failed:',e);
-    });
-  }
   if(skipImages){
     // ステータス変更・書き込みなど — 画像アップロードを待たず即送信
     pushMeta();
   }else{
+    // メタデータを先に送る（登録内容が画像アップロードの完了を待たずに他端末へ届く）
+    pushMeta();
     fbSyncing=true;
     window._fbSyncingAt=Date.now();
     fbPushImages().then(function(){
@@ -625,6 +787,71 @@ function fbPushAll(skipImages){
       updateSyncStatus('error',e.message);
       console.error('Firebase image push failed:',e);
     });
+  }
+}
+
+// メタデータ送信。トランザクション内でサーバーを読み直し、ローカルの変更点だけを
+// 重ねて書き戻す（全体上書きをやめ、他端末・自動取込の変更を消さない）。
+var _fbPushRetry=0;
+function pushMeta(){
+  if(!fbEnabled)return;
+  if(fbMetaSyncing){ // 実行中なら少し待って再送
+    clearTimeout(window._fbSyncTimer);
+    window._fbSyncTimer=setTimeout(function(){fbPushAll(true);},800);
+    return;
+  }
+  var revAtStart=_fbLocalRev;
+  fbMetaSyncing=true;
+  // 万一 Promise が解決しなくても同期が永久停止しないようにする保険
+  clearTimeout(window._fbMetaWatchdog);
+  window._fbMetaWatchdog=setTimeout(function(){
+    if(fbMetaSyncing){fbMetaSyncing=false;console.warn('meta push watchdog: reset');}
+  },45000);
+  var ref=fbDB.collection('workspaces').doc('default');
+  var merged=null;
+  try{
+    fbDB.runTransaction(function(tx){
+      return tx.get(ref).then(function(snap){
+        var sv=(snap.exists&&snap.data())||{};
+        merged=fbMergePayload(sv);
+        var payload=_fbClone(merged);
+        payload.lastModified=firebase.firestore.FieldValue.serverTimestamp();
+        payload.lastClient=fbClientId();
+        tx.set(ref,payload);
+      });
+    }).then(function(){
+      fbMetaSyncing=false;clearTimeout(window._fbMetaWatchdog);_fbPushRetry=0;
+      // サーバーの現在値＝いま書き込んだマージ結果。次回マージの基準にする。
+      fbSetBase(merged);
+      fbLastLocalChange=Date.now();
+      if(_fbLocalRev===revAtStart){
+        // 送信中にローカル変更が無ければ、マージ結果（他端末の変更を含む）を画面へ反映
+        fbApplyMerged(merged);
+        saveLocalOnly();
+        render();
+      }else{
+        // 送信中に操作があった → その変更を次のpushで送る（基準が更新済みなので差分で送られる）
+        clearTimeout(window._fbSyncTimer);
+        window._fbSyncTimer=setTimeout(function(){fbPushAll(true);},600);
+      }
+      updateSyncStatus('synced');
+    }).catch(function(e){
+      fbMetaSyncing=false;clearTimeout(window._fbMetaWatchdog);
+      updateSyncStatus('error',e.message);
+      console.error('Firebase push failed:',e);
+      // 未送信の変更が消えないよう、間隔を空けて自動再試行する
+      if(_fbPushRetry<6){
+        _fbPushRetry++;
+        clearTimeout(window._fbSyncTimer);
+        window._fbSyncTimer=setTimeout(function(){fbPushAll(true);},Math.min(30000,2000*_fbPushRetry));
+      }else{
+        try{toast('⚠ クラウド同期に失敗しています。通信状態を確認してください');}catch(_){}
+      }
+    });
+  }catch(e){
+    fbMetaSyncing=false;clearTimeout(window._fbMetaWatchdog);
+    updateSyncStatus('error',e.message);
+    console.error('Firebase push threw:',e);
   }
 }
 
@@ -699,10 +926,12 @@ async function fbPushImages(){
 
       await fbDB.collection('workspaces').doc('default').collection('images').doc(String(id)).set(doc);
       window._fbSyncedImages[id]=version;
+      saveSyncedImageIndex();
       // 画像アップ完了後に imgVer を更新（メタデータ push 前に設定することで一発で整合性が取れる）
       var dObj=DRAWINGS.find(function(x){return String(x.id)===id});
       if(dObj){
         dObj.imgVer=Date.now();
+        _fbLocalRev++; // ローカル変更として記録（送信中のマージ結果で上書きされないように）
         // _localImgVer も更新してPC自身がエコーで自分の画像を再取得しないようにする
         _localImgVer[String(id)]=dObj.imgVer;
         try{localStorage.setItem('dxp_localImgVer',JSON.stringify(_localImgVer));}catch(e){}
@@ -804,9 +1033,35 @@ function fbStartListener(){
     if(!doc.exists)return;
     var data=doc.data();
     if(!data)return;
-    // 自分のエコーのみ抑制（他デバイスの変更は常に適用）
-    if(data.lastClient===fbClientId()&&Date.now()-fbLastLocalChange<15000)return;
-    // Merge: server data overwrites local
+    // ---- 2回目以降の受信: サーバーの内容とローカルの未送信変更を3方向マージする ----
+    // 以前はここでサーバーの配列をローカルへ丸ごと代入していたため、送信待ちの
+    // ローカル変更（登録・ステータス変更）が消え、その後の全体上書き送信で
+    // サーバー側の他端末の変更まで巻き戻していた。
+    if(fbBase){
+      var _srvJ=_fbJ(data.drawings||[])+_fbJ(data.trash||[])+_fbJ(data.relatedDocuments||{})+_fbJ(data.inspections||{})+_fbJ(data.masters||{})+_fbJ(data.worklogs||[])+_fbJ(data.deliveries||[])+_fbJ(data.annotations||{});
+      var _merged=fbMergePayload(data);
+      var _mrgJ=_fbJ(_merged.drawings)+_fbJ(_merged.trash)+_fbJ(_merged.relatedDocuments)+_fbJ(_merged.inspections)+_fbJ(_merged.masters)+_fbJ(_merged.worklogs)+_fbJ(_merged.deliveries)+_fbJ(_merged.annotations);
+      fbApplyMerged(_merged);
+      fbSetBase(data); // 基準はあくまで「サーバーの状態」
+      var _dedup=deduplicateInspections();
+      if(deduplicateRelatedDocs())_dedup=true;
+      purgeOldTrash();
+      saveLocalOnly();
+      try{localStorage.setItem('dxp_fbCache',JSON.stringify({drawings:DRAWINGS,masters:MASTERS,inspections:inspMeta(),relatedDocuments:relDocMeta(),invoices:INVOICES,annotations:ANNOTATIONS,deliveries:DELIVERIES,worklogs:WORKLOGS,trash:TRASH,nextId:nextId}));}catch(e){}
+      // マージ結果がサーバーと違う＝未送信のローカル変更が残っている → 送信し直す
+      if(_mrgJ!==_srvJ||_dedup){
+        clearTimeout(window._fbSyncTimer);
+        window._fbSyncTimer=setTimeout(function(){fbPushAll(true);},800);
+      }
+      updateSyncStatus('synced');
+      render();
+      fbLoadInspectionFiles();
+      fbLoadRelatedDocFiles();
+      fbPullMissingImages();
+      return;
+    }
+    // ---- 初回受信: サーバーの内容をそのまま採用し、以後のマージ基準にする ----
+    fbSetBase(data);
     if(data.drawings){
       DRAWINGS=data.drawings;DRAWINGS.forEach(function(d){if(d.status==='検図中')d.status='検討中';});
       // 直近のローカル ステータス変更を優先: 受信データが古い値なら再適用し、サーバーに押し返す
@@ -1075,6 +1330,7 @@ function mobileForcePull(){
   window._forcePullImages=true;
   window._fbSnapshotReceived=false;
   window._cacheLoaded=false;
+  fbBase=null; // サーバーの内容をそのまま採用し直す
   updateSyncStatus('connecting');
   if(fbUnsubscribe){fbUnsubscribe();fbUnsubscribe=null;}
   fbStartListener();
@@ -1082,23 +1338,18 @@ function mobileForcePull(){
 
 async function forcePushToFirebase(){
   if(!fbEnabled){alert('Firebase未接続です。');return}
-  if(!confirm('PCの現在のデータ（'+DRAWINGS.length+'件）をFirebaseに送信してスマホと同期します。\nよろしいですか？'))return;
+  if(!confirm('この端末のデータ（'+DRAWINGS.length+'件）と画像をクラウドへ送信します。\n他の端末や自動取込が追加した内容は消えません。\nよろしいですか？'))return;
   updateSyncStatus('pushing');
   try{
-    // 【重要】画像を先にアップロード → imgVer 設定 → メタデータ送信の順で整合性を保証
+    // 【重要】以前はここでサーバーを丸ごと上書きしていたため、他端末・自動取込の
+    // 変更を消していた。現在はマージ送信（pushMeta）を使う。
     window._fbSyncedImages={};// 全画像を強制再アップロード
+    saveSyncedImageIndex();
     window._fbSnapshotReceived=true;
     await fbPushImages();
-    var payload={
-      drawings:DRAWINGS,masters:MASTERS,inspections:inspMeta(),relatedDocuments:relDocMeta(),
-      invoices:INVOICES,annotations:ANNOTATIONS,deliveries:DELIVERIES,worklogs:WORKLOGS,trash:TRASH,nextId:nextId,
-      lastModified:firebase.firestore.FieldValue.serverTimestamp(),
-      lastClient:fbClientId()
-    };
     fbLastLocalChange=Date.now();
-    await fbDB.collection('workspaces').doc('default').set(payload);
-    updateSyncStatus('synced');
-    alert('Firebase送信完了！\nスマホ側で同期ボタンをタップすると最新データが表示されます。');
+    pushMeta();
+    alert('クラウドへの送信を開始しました。\nスマホ側で同期ボタンをタップすると最新データが表示されます。');
   }catch(e){
     updateSyncStatus('error',e.message);
     alert('送信エラー: '+e.message);
@@ -1113,6 +1364,7 @@ function forceRestoreFromFirebase(){
   localStorage.removeItem('dxp_drawings');
   window._fbSnapshotReceived=false;
   window._cacheLoaded=false;
+  fbBase=null; // サーバーの内容をそのまま採用し直す
   dbClear(function(){
     DRAWINGS=[];INVOICES=[];WORKLOGS=[];scannedImages={};scannedPdfs={};pdfThumbnails={};
     render();
@@ -1191,6 +1443,7 @@ function importAllData(event){
         };
         fbDB.collection('workspaces').doc('default').set(_impPayload).then(function(){
           fbLastLocalChange=Date.now();
+          fbSetBase(_impPayload); // バックアップ復元は意図的な全置換。以後の基準を更新する。
           updateSyncStatus('synced');
           alert('インポート完了！ 図面:'+DRAWINGS.length+'件\nFirebaseへの送信も完了しました。スマホをリロードすると反映されます。');
           return fbPushImages();
