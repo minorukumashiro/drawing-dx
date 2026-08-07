@@ -601,6 +601,7 @@ function deduplicateInspections(){
 //   ・自分が削除した項目だけを消す（他端末が追加したものは消さない）
 // 書き込みはトランザクション内で「読み直し→マージ→書き込み」するため、
 // 送信直前に他端末が入れた変更も失われない。
+var APP_VER='20260807c'; // 書き込みに埋める版数。古い版のまま動いている端末の特定に使う。
 var fbBase=null; // マージの基準（最後にサーバーから受け取った状態のコピー）
 // 【重要】Firestore はオブジェクトのキーの並び順を保持しない（読むたびに順序が変わる）。
 // 素の JSON.stringify で比較すると「値は同じなのに違う」と誤判定し、端末同士が
@@ -717,6 +718,19 @@ function fbMergePayload(server){
     relatedDocuments:fbMergeDocMap(server.relatedDocuments,relDocMeta(),fbBase?b.relatedDocuments:null),
     nextId:Math.max(Number(server.nextId)||0,Number(nextId)||0)
   };
+}
+// 受信をきっかけにした送信の回数制限（万一マージや比較に不備があっても暴走させない安全弁）。
+// ユーザー操作による通常の送信は制限しない。
+var _snapPushLog=[];
+function allowSnapshotPush(){
+  var now=Date.now();
+  _snapPushLog=_snapPushLog.filter(function(t){return now-t<60000;});
+  if(_snapPushLog.length>=8){
+    console.warn('同期: 受信起因の送信が1分間に8回を超えたため抑制しました（設定またはデータの不整合の可能性）');
+    return false;
+  }
+  _snapPushLog.push(now);
+  return true;
 }
 // サーバー側の状態を次回マージの基準として記録する
 function fbSetBase(d){
@@ -842,6 +856,7 @@ function pushMeta(){
         var payload=_fbClone(merged);
         payload.lastModified=firebase.firestore.FieldValue.serverTimestamp();
         payload.lastClient=fbClientId();
+        payload.appVer=APP_VER; // 書き込んだアプリの版（古い版のまま動いている端末の特定用）
         tx.set(ref,payload);
       });
     }).then(function(){
@@ -1069,16 +1084,16 @@ function fbStartListener(){
       var _mrgJ=_fbJ(_merged.drawings)+_fbJ(_merged.trash)+_fbJ(_merged.relatedDocuments)+_fbJ(_merged.inspections)+_fbJ(_merged.masters)+_fbJ(_merged.worklogs)+_fbJ(_merged.deliveries)+_fbJ(_merged.annotations);
       fbApplyMerged(_merged);
       fbSetBase(data); // 基準はあくまで「サーバーの状態」
-      var _dedup=deduplicateInspections();
-      if(deduplicateRelatedDocs())_dedup=true;
-      if(_dedup)_fbLocalRev++; // 掃除もローカル変更として扱い、送信対象にする
+      // 重複掃除はここでは送信のきっかけにしない（毎回changedを返す状態になると
+      // 受信のたびに送信が走り、無駄な書き込みが延々と続くため）。次のユーザー操作に相乗りさせる。
+      deduplicateInspections();deduplicateRelatedDocs();
       purgeOldTrash();
       saveLocalOnly();
       try{localStorage.setItem('dxp_fbCache',JSON.stringify({drawings:DRAWINGS,masters:MASTERS,inspections:inspMeta(),relatedDocuments:relDocMeta(),invoices:INVOICES,annotations:ANNOTATIONS,deliveries:DELIVERIES,worklogs:WORKLOGS,trash:TRASH,nextId:nextId}));}catch(e){}
       // マージ結果がサーバーと違う＝未送信のローカル変更が残っている → 送信し直す。
       // 【重要】ローカル操作が1つも無い状態では絶対に送信しない。この歯止めが無いと
       // 比較の誤差だけで端末同士が延々と送信し合う（2026-08-06 の無限ループ事故）。
-      if((_mrgJ!==_srvJ)&&_fbLocalRev!==_fbSyncedRev){
+      if((_mrgJ!==_srvJ)&&_fbLocalRev!==_fbSyncedRev&&allowSnapshotPush()){
         clearTimeout(window._fbSyncTimer);
         window._fbSyncTimer=setTimeout(function(){fbPushAll(true);},800);
       }
