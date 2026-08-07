@@ -507,8 +507,10 @@ function migrateRelatedFilesToDocs(){
   });
   if(changed){relatedFiles={};dbPut('meta','relatedFiles',relatedFiles);}
 }
-// ローカル変更の通し番号。送信中に操作が入ったかの判定に使う。
+// ローカル変更の通し番号。送信中に操作が入ったかの判定と、
+// 「ローカル操作が無いのに送信してしまう」無限ループの歯止めに使う。
 var _fbLocalRev=0;
+var _fbSyncedRev=0; // 最後に送信できたローカル変更の通し番号
 // IndexedDB への保存だけを行う（Firebase 送信をトリガーしない）
 function saveLocalOnly(){
   dbPut('meta','drawings',DRAWINGS);
@@ -600,7 +602,18 @@ function deduplicateInspections(){
 // 書き込みはトランザクション内で「読み直し→マージ→書き込み」するため、
 // 送信直前に他端末が入れた変更も失われない。
 var fbBase=null; // マージの基準（最後にサーバーから受け取った状態のコピー）
-function _fbJ(v){try{return JSON.stringify(v===undefined?null:v)}catch(e){return '__ERR__'}}
+// 【重要】Firestore はオブジェクトのキーの並び順を保持しない（読むたびに順序が変わる）。
+// 素の JSON.stringify で比較すると「値は同じなのに違う」と誤判定し、端末同士が
+// 送信し合う無限ループになる。比較は必ずキーをソートした正規形で行うこと。
+function _fbCanon(v){
+  if(v===undefined)return null;
+  if(v===null||typeof v!=='object')return v;
+  if(Array.isArray(v))return v.map(_fbCanon);
+  var out={},ks=Object.keys(v).sort();
+  for(var i=0;i<ks.length;i++)out[ks[i]]=_fbCanon(v[ks[i]]);
+  return out;
+}
+function _fbJ(v){try{return JSON.stringify(_fbCanon(v))}catch(e){return '__ERR__'}}
 function _fbClone(v){try{return v===undefined?v:JSON.parse(JSON.stringify(v))}catch(e){return v}}
 
 // オブジェクト1件のフィールド単位マージ。ローカルが基準から変えたフィールドだけを勝たせる。
@@ -615,24 +628,36 @@ function fbMergeFields(sv,lv,bv){
   Object.keys(bv).forEach(function(k){if(!(k in lv)&&(_fbJ(sv[k])===_fbJ(bv[k])))delete out[k];});
   return out;
 }
-// キーを持つ配列の3方向マージ
+// キーを持つ配列の3方向マージ。
+// 【重要】並び順は必ず「サーバーの並び」を土台にする。ローカルの並びを土台にすると、
+// 端末ごとに並びが違う場合にお互いが並び替えを送り合う無限ループになる。
 function fbMergeArray(serverArr,localArr,baseArr,keyFn){
   serverArr=Array.isArray(serverArr)?serverArr:[];
   localArr=Array.isArray(localArr)?localArr:[];
   if(!Array.isArray(baseArr))return _fbClone(localArr); // 基準なし＝従来どおりローカル優先
-  var sMap={},bMap={},lSeen={},out=[];
+  var sMap={},bMap={},lMap={},out=[];
   serverArr.forEach(function(x){var k=keyFn(x);if(k!=null)sMap[k]=x;});
   baseArr.forEach(function(x){var k=keyFn(x);if(k!=null)bMap[k]=x;});
-  localArr.forEach(function(x){var k=keyFn(x);if(k!=null)lSeen[k]=1;});
-  // 1) 自分が知らないうちに他端末が追加したもの（サーバーにのみ存在）を先頭に残す
-  serverArr.forEach(function(sv){var k=keyFn(sv);if(k==null)return;if(!lSeen[k]&&!(k in bMap))out.push(_fbClone(sv));});
-  // 2) ローカルの並び順で反映
+  localArr.forEach(function(x){var k=keyFn(x);if(k!=null)lMap[k]=x;});
+  // 1) ローカルで新規追加したもの（サーバーにも基準にも無い）を先頭へ
   localArr.forEach(function(lv){
     var k=keyFn(lv);
     if(k==null){out.push(_fbClone(lv));return;}
-    if(k in sMap)out.push(fbMergeFields(sMap[k],lv,bMap[k]));
-    else if(k in bMap){if(_fbJ(lv)!==_fbJ(bMap[k]))out.push(_fbClone(lv));} // 他端末が削除。ローカルで編集済みなら残す
-    else out.push(_fbClone(lv)); // ローカルで新規追加
+    if(!(k in sMap)&&!(k in bMap))out.push(_fbClone(lv));
+  });
+  // 2) サーバーの並び順で反映
+  serverArr.forEach(function(sv){
+    var k=keyFn(sv);
+    if(k==null){out.push(_fbClone(sv));return;}
+    if(k in lMap)out.push(fbMergeFields(sv,lMap[k],bMap[k]));
+    else if(!(k in bMap))out.push(_fbClone(sv)); // 他端末が追加。自分は知らないので残す
+    // 基準にあってローカルに無い＝自分が削除 → 落とす
+  });
+  // 3) 他端末が削除したが、ローカルで編集済みのものは残す
+  localArr.forEach(function(lv){
+    var k=keyFn(lv);
+    if(k==null||k in sMap||!(k in bMap))return;
+    if(_fbJ(lv)!==_fbJ(bMap[k]))out.push(_fbClone(lv));
   });
   return out;
 }
@@ -821,6 +846,7 @@ function pushMeta(){
       });
     }).then(function(){
       fbMetaSyncing=false;clearTimeout(window._fbMetaWatchdog);_fbPushRetry=0;
+      _fbSyncedRev=revAtStart; // ここまでのローカル変更は送信済み
       // サーバーの現在値＝いま書き込んだマージ結果。次回マージの基準にする。
       fbSetBase(merged);
       fbLastLocalChange=Date.now();
@@ -1045,11 +1071,14 @@ function fbStartListener(){
       fbSetBase(data); // 基準はあくまで「サーバーの状態」
       var _dedup=deduplicateInspections();
       if(deduplicateRelatedDocs())_dedup=true;
+      if(_dedup)_fbLocalRev++; // 掃除もローカル変更として扱い、送信対象にする
       purgeOldTrash();
       saveLocalOnly();
       try{localStorage.setItem('dxp_fbCache',JSON.stringify({drawings:DRAWINGS,masters:MASTERS,inspections:inspMeta(),relatedDocuments:relDocMeta(),invoices:INVOICES,annotations:ANNOTATIONS,deliveries:DELIVERIES,worklogs:WORKLOGS,trash:TRASH,nextId:nextId}));}catch(e){}
-      // マージ結果がサーバーと違う＝未送信のローカル変更が残っている → 送信し直す
-      if(_mrgJ!==_srvJ||_dedup){
+      // マージ結果がサーバーと違う＝未送信のローカル変更が残っている → 送信し直す。
+      // 【重要】ローカル操作が1つも無い状態では絶対に送信しない。この歯止めが無いと
+      // 比較の誤差だけで端末同士が延々と送信し合う（2026-08-06 の無限ループ事故）。
+      if((_mrgJ!==_srvJ)&&_fbLocalRev!==_fbSyncedRev){
         clearTimeout(window._fbSyncTimer);
         window._fbSyncTimer=setTimeout(function(){fbPushAll(true);},800);
       }
