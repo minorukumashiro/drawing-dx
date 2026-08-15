@@ -9,7 +9,7 @@ const path = require('path');
 const state = require('./lib/state');
 const backup = require('./lib/backup');
 const { requiredIntervalMinutes } = require('./lib/holidays');
-const { listCandidates, dedupKey } = require('./lib/scanFolder');
+const { listCandidates, dedupKey, stripSavePrefix } = require('./lib/scanFolder');
 const { detectNonDrawingDoc } = require('./lib/detectNonDrawing');
 const { classifyNonWorkImage } = require('./lib/junkImage');
 const fbSync = require('./lib/firestoreSync');
@@ -42,8 +42,43 @@ function guessDrawingNumber(fileName) {
 
 function mailDisplayName(fileName) {
   // ウォッチフォルダ保存時に付与される "yyyymmdd_hhnnss_" 衝突防止プレフィックスを表示名からは除く
-  const stripped = fileName.replace(/^\d{8}_\d{6}_/, '');
-  return stripped.replace(/\.[^.]+$/, '');
+  return stripSavePrefix(fileName).replace(/\.[^.]+$/, '');
+}
+
+// 残す方の処理記録を選ぶ: 取込済み(drawingIdあり)を優先し、同条件なら先に記録された方。
+function preferRecord(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  const ai = a.drawingId ? 1 : 0;
+  const bi = b.drawingId ? 1 : 0;
+  if (ai !== bi) return ai > bi ? a : b;
+  const at = a.at ? new Date(a.at).getTime() : Infinity;
+  const bt = b.at ? new Date(b.at).getTime() : Infinity;
+  return at <= bt ? a : b;
+}
+
+// state.json の処理済みキーを新形式へ一度だけ移行する。
+// 旧: mail:<保存名>|<サイズ>|<更新時刻>  新: mail:<元のファイル名>|<サイズ>
+// 旧形式では同じ添付を保存し直すたびに別キーになり重複取込が起きた（dedupKeyのコメント参照）。
+// 過去の取込履歴を捨てると processed/ へ退避済みの分まで再取込されかねないため、
+// キーを付け替えて履歴を引き継ぐ。付け替えで衝突した記録は preferRecord で1件に畳む。
+function migrateDedupKeys(st) {
+  if (st.dedupKeyVersion === 2) return 0;
+  const next = {};
+  let renamed = 0;
+  for (const [key, rec] of Object.entries(st.processed || {})) {
+    if (!key.startsWith('mail:')) { next[key] = rec; continue; }
+    const parts = key.slice(5).split('|');
+    if (parts.length < 3) { next[key] = rec; continue; } // 既に新形式
+    const size = parts[parts.length - 2];
+    const fileName = parts.slice(0, -2).join('|'); // ファイル名自体に | が含まれる場合に備える
+    const newKey = `mail:${stripSavePrefix(fileName)}|${size}`;
+    if (newKey !== key) renamed++;
+    next[newKey] = preferRecord(next[newKey], rec);
+  }
+  st.processed = next;
+  st.dedupKeyVersion = 2;
+  return renamed;
 }
 
 // FAXファイル名 "<送信元>_<YYYYMMDD>_<HHMMSS>.pdf" から表示名と日付を推測する。
@@ -159,6 +194,13 @@ async function main() {
   const cfg = loadConfig();
   const st = state.load();
   const now = new Date();
+
+  // 巡回間隔でスキップする回でも必ず通す（放置すると重複取込が続くため）
+  const renamedKeys = migrateDedupKeys(st);
+  if (renamedKeys > 0) {
+    state.save(st);
+    log(`state移行: メールの重複判定キー ${renamedKeys} 件を新形式（元ファイル名+サイズ）へ変換しました`);
+  }
 
   if (st.lastRun) {
     const elapsedMin = (now - new Date(st.lastRun)) / 60000;

@@ -37,13 +37,21 @@ function listCandidates(dirPath, source, processedDirName, knownNames) {
   return out;
 }
 
+// Outlookマクロが保存時に付ける "yyyymmdd_hhnnss_" 衝突防止プレフィックスを除く
+function stripSavePrefix(fileName) {
+  return fileName.replace(/^\d{8}_\d{6}_/, '');
+}
+
 function dedupKey(item) {
   if (item.source === 'mail') {
-    // メール添付は同名ファイルが再送されるケースもあるためサイズ+更新時刻も含める
-    return `mail:${item.fileName}|${item.size}|${item.mtimeMs}`;
+    // 2026-08-15: 以前は "ファイル名|サイズ|更新時刻" で識別していたが、Outlookが受信トレイを
+    // 再取得すると受信済みメールの添付が新しいプレフィックス・新しい更新時刻で保存し直され、
+    // キーが総取っ替えになって取込済みの43件が重複登録された。保存のたびに変わる要素を
+    // 全て落とし、元のファイル名とバイトサイズだけで識別する。
+    return `mail:${stripSavePrefix(item.fileName)}|${item.size}`;
   }
   // FAXはファイル名に送信元番号+タイムスタンプが入るため名前+サイズで十分一意
   return `fax:${item.fileName}|${item.size}`;
 }
 
-module.exports = { listCandidates, dedupKey };
+module.exports = { listCandidates, dedupKey, stripSavePrefix };
