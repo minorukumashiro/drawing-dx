@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "drawing-dx",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["-y", "http-server", "-c-1"],
+      "port": 5599,
+      "autoPort": true
+    }
+  ]
+}

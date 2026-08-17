@@ -1,1 +1,8 @@
 functions/node_modules/
+
+# firebase deploy が作るローカルキャッシュ
+.firebase/
+
+# Claude Codeのこの端末固有の設定（絶対パス・スクラッチパスを含む）。
+# 共有したい設定は .claude/settings.json 側に置くこと。
+.claude/settings.local.json
