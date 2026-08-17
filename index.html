@@ -2676,8 +2676,8 @@ function wlSetField(id,field,value,silent){
   if(!silent)render();
 }
 // 作業日報の名前・機械番号はプルダウンから選ぶ。現場でスマホから毎回手入力するのが
-// 手間だったため。マスタに無い人・機械は末尾の「＋ 新規追加…」から登録でき、
-// 選んだ時点でマスター管理側(worklogWorkers/worklogMachines)にも反映される。
+// 手間だったため。新規の人・機械の登録はスマホの「＋ 新規追加…」からのみ行い、
+// PCではマスター管理タブに一本化する（PCから増やせると表記ゆれの入口が2つになるため）。
 function wlPickOptions(masterKey,cur){
   cur=cur||'';
   var list=(MASTERS[masterKey]||[]).slice();
@@ -2685,7 +2685,9 @@ function wlPickOptions(masterKey,cur){
   if(cur&&list.indexOf(cur)<0)list.unshift(cur);
   var h='<option value=""'+(cur?'':' selected')+'>（選択してください）</option>';
   list.forEach(function(v){h+='<option value="'+esc(v)+'"'+(v===cur?' selected':'')+'>'+esc(v)+'</option>';});
-  h+='<option value="'+WL_NEW_OPT+'">＋ 新規追加…</option>';
+  if(isMobileDevice())h+='<option value="'+WL_NEW_OPT+'">＋ 新規追加…</option>';
+  // PCでマスタが空だと選ぶものが無く手詰まりに見えるので、登録先を案内する
+  else if(!list.length)h+='<option value="" disabled>（マスター管理タブで登録してください）</option>';
   return h;
 }
 function wlSetSel(id,field,masterKey,el){
