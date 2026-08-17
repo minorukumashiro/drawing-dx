@@ -2211,7 +2211,21 @@ function render(){
   // Datalist for materials
   h+='<datalist id="matList">';MASTERS.materials.forEach(function(m){h+='<option value="'+esc(m)+'">'});h+='</datalist>';
   h+='<datalist id="clList">';MASTERS.clients.forEach(function(cl){h+='<option value="'+esc(cl)+'">'});h+='</datalist>';
+  // #app を丸ごと作り直すため、何もしないとスクロール位置が毎回先頭に戻る。
+  // onSnapshot（他端末・メール/FAXウォッチャーの書き込み、自分の変更のエコー）から
+  // render() が随時走るので、スマホで作業日報を読んでいる最中に勝手に上へ飛んでいた。
+  // 同じタブの再描画のときだけ位置を復元する（タブ切替時は従来どおり先頭から見せる）。
+  var _sameTab=(window._lastRenderTab===S.tab);
+  var _keepY=_sameTab?(window.pageYOffset||document.documentElement.scrollTop||0):0;
   app.innerHTML=h;inject();
+  window._lastRenderTab=S.tab;
+  if(_keepY>0){
+    window.scrollTo(0,_keepY);
+    // 画像や遅延要素で高さが後から確定する場合に備えて、レイアウト確定後にもう一度戻す
+    requestAnimationFrame(function(){
+      if(Math.abs((window.pageYOffset||document.documentElement.scrollTop||0)-_keepY)>1)window.scrollTo(0,_keepY);
+    });
+  }
   // IME-aware search input (図面一覧)
   var sb=document.getElementById('searchBox');
   if(sb){
