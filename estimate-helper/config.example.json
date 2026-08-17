@@ -9,6 +9,23 @@
     { "path": "./data/仕入先元帳_例.txt", "type": "supplier" }
   ],
 
+  "_comment_autoImport": "bin/auto-import.js（弥生エクスポートの自動取込ウォッチャー）用。watchFoldersのフォルダを走査し、ファイル名がcustomerPattern/supplierPatternに一致するファイルの更新を検知したら自動でFirestoreへ取り込む。省略するとauto-import.jsは実行できない（手動のbin/import-to-firestore.jsは影響なし）。詳細はREADME.md「弥生データの自動取込」参照",
+  "autoImport": {
+    "watchFolders": [
+      {
+        "path": "C:\\\\Users\\\\yourname\\\\OneDrive\\\\ドキュメント\\\\Yayoi\\\\Exchange",
+        "customerPattern": "^Tokmt.*\\\\.txt$",
+        "supplierPattern": "^Shimt.*\\\\.txt$"
+      }
+    ],
+    "archiveFolder": "data/archive",
+    "archiveKeep": 60,
+    "archiveMaxTotalMB": 1000,
+    "stateFile": "data/auto-import-state.json",
+    "settleSeconds": 60,
+    "minFileBytes": 100
+  },
+
   "_comment_yayoiFieldIndex": "実データの列位置が想定と違う場合だけ上書きしてください（既定値はlib/yayoiSource.jsのDEFAULT_FIELD_INDEXと同じ）",
   "yayoiFieldIndex": {
     "date": 3,

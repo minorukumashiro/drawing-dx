@@ -209,15 +209,80 @@ node bin/import-to-firestore.js             # 実際にFirestoreへupsert
 
 `config.json` の `yayoiFiles` に設定した弥生エクスポートファイルを全て読み込み、`lib/yayoiSource.js`（CLIと共通）で実績行を抽出して `yayoiRecords` コレクションへ書き込みます。
 
-### 運用: 弥生データの更新は手動です
+### 運用: 弥生データの更新
 
-**弥生データはリアルタイム連携していません。** 新しい取引を検索対象に含めたい場合は、そのつど次の手順が必要です。
+**弥生データはリアルタイム連携していません**（弥生販売25に元帳を取得するAPIが無いため）。ただし、**エクスポート後のFirestore取込は自動化済み**です（下記「弥生データの自動取込」）。人が行う作業は弥生のGUIでエクスポートするところまでで、そのあと `node bin/import-to-firestore.js` を手で叩く必要はありません。
 
-1. 弥生販売25で対象の得意先/仕入先の「元帳印刷」→「エクスポート」を実行し、`Documents\Yayoi\Exchange\` 配下のファイル（`Tokmt.txt`/`Shimt.txt`）を上書き、または別名で保存
-2. 新しい取引先を追加する場合は `estimate-helper/config.json` の `yayoiFiles` にファイルパスを追記
-3. `node bin/import-to-firestore.js` を実行してFirestoreに反映
+1. 弥生販売25で対象の得意先/仕入先の「元帳印刷」→「エクスポート」を実行する（出力先は `OneDrive\ドキュメント\Yayoi\Exchange\` の `Tokmt.txt`/`Shimt.txt`。別名で保存しても `Tokmt`/`Shimt` で始まる `.txt` なら自動取込の対象になる）
+2. 15分以内に `DrawingDX-YayoiAutoImport` タスクが更新を検知し、Firestoreへ取り込む
+3. 図面DXの「💰 類似実績検索」に反映される
 
 （図面DX本体側の`drawings[]`は今まで通りリアルタイム同期のままです。ボタンを押すたびに最新のものを見に行きます。）
+
+---
+## 弥生データの自動取込（DrawingDX-YayoiAutoImport）
+
+`bin/auto-import.js` が弥生のエクスポート先フォルダを見張り、ファイルが更新されたら自動でFirestoreへ取り込みます。タスクスケジューラから15分おきに起動され、**更新が無ければ何もせず即終了**します。
+
+```
+弥生販売25「元帳印刷」→「エクスポート」   ← ここだけ人の操作
+        │
+        ▼
+OneDrive\ドキュメント\Yayoi\Exchange\  （Tokmt*.txt / Shimt*.txt）
+        │  ← タスク DrawingDX-YayoiAutoImport が15分おきに巡回
+        │     ・サイズ/更新日時が前回と違うファイルだけを対象にする
+        │     ・取り込む前に data/archive/ へスナップショットを退避
+        ▼
+lib/importer.js → Firestore `yayoiRecords` へ upsert（手動CLIと同じ処理）
+```
+
+### なぜアーカイブを取るのか
+
+弥生は取引先を切り替えても**同じファイル名に上書き**エクスポートします。取引先を変えて連続でエクスポートすると前の内容が消えるため、取り込む直前に `data/archive/{種別}_{元ファイル名}_{更新日時}.txt` としてコピーを残しています。取込に失敗した場合や、後から別の切り口で入れ直したい場合はここから再取込できます（`archiveKeep` 件かつ合計 `archiveMaxTotalMB` MBまで保持し、古いものから自動削除。得意先元帳の全社分は1ファイル50MB超になるため容量でも制限しています）。
+
+### セットアップ
+
+```powershell
+cd estimate-helper
+.\install-auto-import-task.ps1
+```
+
+タスク名 `DrawingDX-YayoiAutoImport` として登録されます（管理者権限不要）。ログは `estimate-helper\auto-import.log`（5MB超で `.old` へローテーション）。
+
+解除したい場合:
+
+```powershell
+Unregister-ScheduledTask -TaskName 'DrawingDX-YayoiAutoImport' -Confirm:$false
+```
+
+### 手で確認・実行したいとき
+
+```bash
+node bin/auto-import.js --dry-run   # 対象ファイルと件数だけ確認（書き込まない）
+node bin/auto-import.js             # 変更があれば取り込む（タスクと同じ動作）
+node bin/auto-import.js --force     # 変更が無くても全ファイルを取り込み直す
+```
+
+### 設定（config.json の `autoImport`）
+
+| キー | 既定値 | 内容 |
+|---|---|---|
+| `watchFolders[].path` | — | 監視するフォルダ（弥生のエクスポート先） |
+| `watchFolders[].customerPattern` | `^Tokmt.*\.txt$` | 得意先元帳とみなすファイル名の正規表現 |
+| `watchFolders[].supplierPattern` | `^Shimt.*\.txt$` | 仕入先元帳とみなすファイル名の正規表現 |
+| `archiveFolder` | `data/archive` | 取込前スナップショットの保存先 |
+| `archiveKeep` | 60 | アーカイブの保持件数 |
+| `archiveMaxTotalMB` | 1000 | アーカイブ合計サイズの上限(MB) |
+| `stateFile` | `data/auto-import-state.json` | 取込済みファイルのサイズ・更新日時の記録先 |
+| `settleSeconds` | 60 | 更新直後（書き込み中の可能性）のファイルを見送る秒数 |
+| `minFileBytes` | 100 | これ未満のファイルは空エクスポート事故とみなし無視 |
+
+### 注意点
+
+- 取込に失敗したファイルは `state` を更新しないため、次回の巡回で自動的に再試行されます（データは失われません）。
+- 再取込しても重複しません（ドキュメントIDが `${種別}_${取引先コード}_{日付}_{伝票番号}_{明細行番号}` で安定しているため upsert になる）。
+- `data/` は `.gitignore` 対象なので、アーカイブと state はリポジトリに入りません。
+- **2026-08-17**: `config.json` の `yayoiFiles` が `C:\Users\ths-4\Documents\Yayoi\Exchange\...` を指していましたが、Documentsの実体はOneDrive配下でこのパスは存在しませんでした。この状態では読み込み0件のまま**警告だけ出して正常終了**してしまい、取り込めていないことに気付けません。実在するパスへ修正済みです。
 
 ### 複合インデックス
 
