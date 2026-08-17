@@ -2657,6 +2657,8 @@ function analyticsHTML(){
 }
 // ===== 作業日報 =====
 var WL_STATUSES=["製造中","完了"];
+// 名前・機械番号プルダウンの「＋ 新規追加…」を表す番兵値。実データと衝突しない文字列にしてある
+var WL_NEW_OPT='__wlNewEntry__';
 var _wlSeq=0;
 function wlNewRow(){
   _wlSeq++;
@@ -2673,12 +2675,33 @@ function wlSetField(id,field,value,silent){
   r[field]=value;
   if(!silent)render();
 }
-function wlSetPick(id,field,masterKey,value){
-  value=(value||'').trim();
-  wlSetField(id,field,value,true);
-  if(value&&MASTERS[masterKey].indexOf(value)<0){MASTERS[masterKey].push(value);}
-  saveAll(true);
-  render();
+// 作業日報の名前・機械番号はプルダウンから選ぶ。現場でスマホから毎回手入力するのが
+// 手間だったため。マスタに無い人・機械は末尾の「＋ 新規追加…」から登録でき、
+// 選んだ時点でマスター管理側(worklogWorkers/worklogMachines)にも反映される。
+function wlPickOptions(masterKey,cur){
+  cur=cur||'';
+  var list=(MASTERS[masterKey]||[]).slice();
+  // 以前に自由入力で保存された値がマスタに無い場合も選択肢に残す（既存の記録が空に見えないように）
+  if(cur&&list.indexOf(cur)<0)list.unshift(cur);
+  var h='<option value=""'+(cur?'':' selected')+'>（選択してください）</option>';
+  list.forEach(function(v){h+='<option value="'+esc(v)+'"'+(v===cur?' selected':'')+'>'+esc(v)+'</option>';});
+  h+='<option value="'+WL_NEW_OPT+'">＋ 新規追加…</option>';
+  return h;
+}
+function wlSetSel(id,field,masterKey,el){
+  var v=el.value;
+  if(v===WL_NEW_OPT){
+    var nv=(prompt((field==='worker'?'名前':'機械番号')+'を入力してください','')||'').trim();
+    // キャンセル・空入力なら選択を元の値に戻す（「＋ 新規追加…」が選ばれたままにしない）
+    if(!nv){render();return;}
+    if((MASTERS[masterKey]||[]).indexOf(nv)<0)MASTERS[masterKey].push(nv);
+    wlSetField(id,field,nv,true);
+    saveAll(true);
+    render(); // 追加した値を他の行の選択肢にも出すため作り直す
+    return;
+  }
+  wlSetField(id,field,v,true);
+  saveAll(true); // 選択済みの値を選び直しただけなので再描画は不要（入力中の他項目を巻き込まない）
 }
 function wlSetDate(v){S.wlDate=v;render();}
 function wlSetMfgMin(drawingId,value){
@@ -2793,8 +2816,8 @@ function worklogHTML(){
       }
     })();
     h+='<div class="f-row" style="grid-template-columns:'+(isMobileDevice()?'1fr':'1fr 1fr 1fr')+';margin-bottom:10px">';
-    h+='<div class="f-field"><label>名前</label><input list="wlWorkerList" value="'+esc(row.worker)+'" placeholder="名前を入力/選択" onchange="wlSetPick(\''+row.id+'\',\'worker\',\'worklogWorkers\',this.value)"></div>';
-    h+='<div class="f-field"><label>機械番号</label><input list="wlMachineList" value="'+esc(row.machine)+'" placeholder="機械番号を入力/選択" onchange="wlSetPick(\''+row.id+'\',\'machine\',\'worklogMachines\',this.value)"></div>';
+    h+='<div class="f-field"><label>名前</label><select onchange="wlSetSel(\''+row.id+'\',\'worker\',\'worklogWorkers\',this)">'+wlPickOptions('worklogWorkers',row.worker)+'</select></div>';
+    h+='<div class="f-field"><label>機械番号</label><select onchange="wlSetSel(\''+row.id+'\',\'machine\',\'worklogMachines\',this)">'+wlPickOptions('worklogMachines',row.machine)+'</select></div>';
     h+='<div class="f-field"><label>ステータス</label><div style="display:flex;gap:6px;margin-top:2px">'+(isMobileDevice()?['完了']:WL_STATUSES).map(function(s){var on=row.status===s;var col=s==='完了'?'#1B8C65':'var(--ac)';return'<button type="button" onclick="wlSetField(\''+row.id+'\',\'status\',\''+s+'\')" style="flex:1;padding:8px 0;border-radius:8px;font-size:12px;font-weight:600;border:2px solid '+col+';cursor:pointer;background:'+(on?col:'transparent')+';color:'+(on?'#fff':col)+'">'+s+'</button>'}).join('')+'</div></div>';
     h+='</div>';
     if(done){
@@ -2811,8 +2834,6 @@ function worklogHTML(){
     h+='</div>';
   });
   h+='</div>';
-  h+='<datalist id="wlWorkerList">'+MASTERS.worklogWorkers.map(function(w){return'<option value="'+esc(w)+'">'}).join('')+'</datalist>';
-  h+='<datalist id="wlMachineList">'+MASTERS.worklogMachines.map(function(m){return'<option value="'+esc(m)+'">'}).join('')+'</datalist>';
 
   var validCount=S.wlRows.filter(function(r){return r.worker&&r.machine}).length;
   h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:28px;flex-wrap:wrap">';
