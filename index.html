@@ -1668,6 +1668,24 @@ function todayLocal(){var d=new Date();return d.getFullYear()+'-'+String(d.getMo
 var S={tab:'board',search:'',wbSearch:'',wbSearchInput:'',clientFilter:'',fcat:'すべて',minSim:0,sel:null,results:null,searching:false,detail:null,regOpen:false,regPrev:null,regName:'',regBlobUrl:null,regIsPdf:false,ocrSt:'idle',ocrF:{},invType:'見積書',invDrawing:null,invSearch:'',annoDrawing:null,annoSearch:'',annoPage:1,annoPageCount:0,annoTool:'pen',annoColor:'#C03030',annoStamps:[],annoQRs:[],annoTexts:[],annoLines:[],editOpen:false,editDwg:null,viewerId:null,bulkOpen:false,bulkItems:[],bulkSelected:0,verifyOpen:false,wlDate:todayLocal(),wlRows:null,wlSaved:false,wlShowAll:false};
 try{var _bc=localStorage.getItem('dxp_boardCollapsed');if(_bc)S.boardCollapsed=JSON.parse(_bc);}catch(e){}
 
+// 再描画は #app を作り直すため、入力中だった欄のフォーカスとカーソル位置が失われる。
+// 要素にidが無いので、#app からの子要素インデックスの並び（DOM上の位置）で同じ欄を
+// 特定して復元する。構造が変わっていた場合は復元しない（別の欄に飛ばさないため）。
+function _domPath(el,root){
+  var p=[];
+  while(el&&el!==root){
+    var par=el.parentNode;
+    if(!par)return null;
+    p.unshift(Array.prototype.indexOf.call(par.children,el));
+    el=par;
+  }
+  return el===root?p:null;
+}
+function _domAt(path,root){
+  var el=root;
+  for(var i=0;i<path.length&&el;i++)el=el.children[path[i]];
+  return el||null;
+}
 function render(){
   if(!window._bootStarted)return; // ログイン前は描画しない（ログイン画面を保護）
   if(!MASTERS.worklogWorkers)MASTERS.worklogWorkers=[];
@@ -2217,8 +2235,30 @@ function render(){
   // 同じタブの再描画のときだけ位置を復元する（タブ切替時は従来どおり先頭から見せる）。
   var _sameTab=(window._lastRenderTab===S.tab);
   var _keepY=_sameTab?(window.pageYOffset||document.documentElement.scrollTop||0):0;
+  // 入力中だった欄とカーソル位置を控える（スクロール位置と同じ理由で失われるため）
+  var _foc=null;
+  if(_sameTab){
+    var _ae=document.activeElement;
+    if(_ae&&_ae!==document.body&&app.contains(_ae)&&/^(INPUT|TEXTAREA|SELECT)$/.test(_ae.tagName||'')){
+      var _fp=_domPath(_ae,app);
+      if(_fp){
+        _foc={path:_fp,tag:_ae.tagName,start:null,end:null};
+        // number等はselectionStartが読めない環境があるので握りつぶす
+        try{_foc.start=_ae.selectionStart;_foc.end=_ae.selectionEnd;}catch(e){}
+      }
+    }
+  }
   app.innerHTML=h;inject();
   window._lastRenderTab=S.tab;
+  if(_foc){
+    var _fe=_domAt(_foc.path,app);
+    if(_fe&&_fe.tagName===_foc.tag){
+      try{
+        _fe.focus({preventScroll:true}); // スクロール復元と競合しないよう位置は動かさない
+        if(_foc.start!=null&&_fe.setSelectionRange)_fe.setSelectionRange(_foc.start,_foc.end);
+      }catch(e){}
+    }
+  }
   if(_keepY>0){
     window.scrollTo(0,_keepY);
     // 画像や遅延要素で高さが後から確定する場合に備えて、レイアウト確定後にもう一度戻す
