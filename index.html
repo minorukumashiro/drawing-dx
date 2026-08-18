@@ -622,6 +622,12 @@ function _fbCanon(v){
 }
 function _fbJ(v){try{return JSON.stringify(_fbCanon(v))}catch(e){return '__ERR__'}}
 function _fbClone(v){try{return v===undefined?v:JSON.parse(JSON.stringify(v))}catch(e){return v}}
+// 画面に表示されるデータ全体の署名。マージ適用の前後で比べ、変化が無ければ再描画を省く。
+// 書類は data(base64) を含まない meta 形で比較する（毎回数十MBを文字列化しないため）。
+function _fbLocalSig(){
+  return _fbJ(DRAWINGS)+_fbJ(TRASH)+_fbJ(relDocMeta())+_fbJ(inspMeta())+_fbJ(MASTERS)
+    +_fbJ(WORKLOGS)+_fbJ(DELIVERIES)+_fbJ(ANNOTATIONS)+_fbJ(INVOICES)+String(nextId);
+}
 
 // オブジェクト1件のフィールド単位マージ。ローカルが基準から変えたフィールドだけを勝たせる。
 function fbMergeFields(sv,lv,bv){
@@ -1086,6 +1092,7 @@ function fbStartListener(){
     // サーバー側の他端末の変更まで巻き戻していた。
     if(fbBase){
       var _srvJ=_fbJ(data.drawings||[])+_fbJ(data.trash||[])+_fbJ(data.relatedDocuments||{})+_fbJ(data.inspections||{})+_fbJ(data.masters||{})+_fbJ(data.worklogs||[])+_fbJ(data.deliveries||[])+_fbJ(data.annotations||{});
+      var _preSig=_fbLocalSig(); // 適用前の画面データ（再描画が要るかの判定用）
       var _merged=fbMergePayload(data);
       var _mrgJ=_fbJ(_merged.drawings)+_fbJ(_merged.trash)+_fbJ(_merged.relatedDocuments)+_fbJ(_merged.inspections)+_fbJ(_merged.masters)+_fbJ(_merged.worklogs)+_fbJ(_merged.deliveries)+_fbJ(_merged.annotations);
       fbApplyMerged(_merged);
@@ -1104,7 +1111,11 @@ function fbStartListener(){
         window._fbSyncTimer=setTimeout(function(){fbPushAll(true);},800);
       }
       updateSyncStatus('synced');
-      render();
+      // 画面に出るデータが1つも変わっていなければ描画し直さない。他端末やウォッチャーの
+      // 書き込み、自分の変更のエコーが届くたびに #app を作り直していたため画面がチカチカしていた。
+      // 同期バッジ(updateSyncStatus)と死活監視バナー(checkWatcherHealth)はDOMを直接触るので、
+      // ここを飛ばしても表示は更新される。
+      if(_fbLocalSig()!==_preSig)render();
       fbLoadInspectionFiles();
       fbLoadRelatedDocFiles();
       fbPullMissingImages();
