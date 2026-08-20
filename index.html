@@ -1697,6 +1697,51 @@ function _domAt(path,root){
   for(var i=0;i<path.length&&el;i++)el=el.children[path[i]];
   return el||null;
 }
+// 図面登録・編集モーダルの入力欄は state を持たず、値がDOM上にしか無い（saveDwg/saveEdit が
+// 保存時にDOMから読む作り）。そのため他端末の更新で render() が走ると、入力途中の
+// 図面番号・名称などが初期値やOCR結果に戻ってしまっていた。
+// ここでは「ユーザーが手で変えた欄」だけを退避して復元する。defaultValue（HTMLのvalue属性）
+// と現在値の差で判定するので、触っていない欄はサーバー側の新しい値がそのまま反映される。
+function _formDirty(root){
+  var out=[],els=root.querySelectorAll('input,textarea,select');
+  for(var i=0;i<els.length;i++){
+    var el=els[i],tag=el.tagName,type=el.type||'',dirty=false,val=null;
+    if(type==='file')continue; // ファイル欄は値を代入できない
+    if(tag==='SELECT'){
+      var def=-1;
+      for(var j=0;j<el.options.length;j++){if(el.options[j].defaultSelected){def=j;break;}}
+      if(def<0)def=el.options.length?0:-1;
+      dirty=(el.selectedIndex!==def);val=el.value;
+    }else if(type==='checkbox'||type==='radio'){
+      dirty=(el.checked!==el.defaultChecked);val=el.checked;
+    }else{
+      dirty=(el.value!==el.defaultValue);val=el.value;
+    }
+    if(!dirty)continue;
+    var p=_domPath(el,root);
+    if(p)out.push({path:p,tag:tag,id:el.id||'',type:type,val:val});
+  }
+  return out;
+}
+function _formRestore(root,list){
+  for(var i=0;i<list.length;i++){
+    var f=list[i],el=_domAt(f.path,root);
+    // 位置・種類・idが全部一致したときだけ戻す（作り直しで中身が変わっていた場合に
+    // 別の欄へ値を書き込まないため）
+    if(!el||el.tagName!==f.tag||(el.id||'')!==f.id||(el.type||'')!==f.type)continue;
+    try{
+      if(f.tag==='SELECT'){
+        var has=false;
+        for(var j=0;j<el.options.length;j++){if(el.options[j].value===f.val){has=true;break;}}
+        if(has)el.value=f.val; // 選択肢自体が消えていたら戻さない
+      }else if(f.type==='checkbox'||f.type==='radio'){
+        el.checked=f.val;
+      }else{
+        el.value=f.val;
+      }
+    }catch(e){}
+  }
+}
 function render(){
   if(!window._bootStarted)return; // ログイン前は描画しない（ログイン画面を保護）
   if(!MASTERS.worklogWorkers)MASTERS.worklogWorkers=[];
@@ -2259,8 +2304,11 @@ function render(){
       }
     }
   }
+  // 入力途中の値（登録・編集モーダルなど）を控える
+  var _dirty=_sameTab?_formDirty(app):null;
   app.innerHTML=h;inject();
   window._lastRenderTab=S.tab;
+  if(_dirty&&_dirty.length)_formRestore(app,_dirty);
   if(_foc){
     var _fe=_domAt(_foc.path,app);
     if(_fe&&_fe.tagName===_foc.tag){
