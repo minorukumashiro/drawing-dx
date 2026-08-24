@@ -631,7 +631,7 @@ function _fbClone(v){try{return v===undefined?v:JSON.parse(JSON.stringify(v))}ca
 // サーバー/基準/ローカル/マージ結果でどうなっているかを毎回記録する。
 var _syncLog=[],_syncWatch=null;
 function dxpWatch(id){
-  _syncWatch=(id==null?null:String(id));
+  _syncWatch=(id==null?null:String(id)); // 省略可。指定しなくてもステータス変化は自動記録される
   try{toast(_syncWatch?('同期ログ: 図面ID '+_syncWatch+' の監視を開始'):'同期ログ: 監視を解除');}catch(e){}
   return _syncWatch;
 }
@@ -639,6 +639,18 @@ function _syncStat(arr,id){
   if(!id||!Array.isArray(arr))return '-';
   for(var i=0;i<arr.length;i++){if(arr[i]&&String(arr[i].id)===id)return String(arr[i].status);}
   return 'なし';
+}
+// 同期の結果ステータスが変わる図面を自動で拾う。事前にIDが分からなくても
+// 巻き戻り（自分が変えたはずの状態が別の値に戻る）を捕まえられるようにするため。
+function _statusMap(arr){
+  var m={};
+  if(Array.isArray(arr))for(var i=0;i<arr.length;i++){var d=arr[i];if(d&&d.id!=null)m[String(d.id)]=String(d.status);}
+  return m;
+}
+function _statusDiff(before,after){
+  var a=_statusMap(before),b=_statusMap(after),out=[];
+  Object.keys(b).forEach(function(k){if((k in a)&&a[k]!==b[k])out.push(k+':'+a[k]+'->'+b[k]);});
+  return out;
 }
 function syncLog(ev,info){
   var r={t:new Date().toTimeString().slice(0,8),ev:ev};
@@ -919,6 +931,8 @@ function pushMeta(){
       // サーバーの現在値＝いま書き込んだマージ結果。次回マージの基準にする。
       fbSetBase(merged);
       fbLastLocalChange=Date.now();
+      var _pdiff=_statusDiff(DRAWINGS,merged.drawings);
+      if(_pdiff.length)syncLog('★送信で状態が変わった',{件数:_pdiff.length,内容:_pdiff.slice(0,8).join(' ')});
       syncLog('送信完了',{srvRead:_syncStat(_svSeen&&_svSeen.drawings,_syncWatch),wrote:_syncStat(merged.drawings,_syncWatch),rev:_fbLocalRev+'/'+_fbSyncedRev});
       if(_fbLocalRev===revAtStart){
         // 送信中にローカル変更が無ければ、マージ結果（他端末の変更を含む）を画面へ反映
@@ -1143,6 +1157,12 @@ function fbStartListener(){
       // 古い版のまま動いている端末が混ざっていると、3方向マージを持たない実装が
       // 全体上書きしてステータスを巻き戻すことがあるため記録する
       if(data.appVer&&data.appVer!==APP_VER)syncLog('版ちがい',{from:data.lastClient,ver:data.appVer,me:APP_VER});
+      var _sdiff=_statusDiff(DRAWINGS,_merged.drawings);
+      if(_sdiff.length)syncLog('★状態が変わった',{
+        from:data.lastClient||'?',ver:data.appVer||'?',
+        cache:(doc.metadata&&doc.metadata.fromCache)?1:0,
+        rev:_fbLocalRev+'/'+_fbSyncedRev,
+        件数:_sdiff.length,内容:_sdiff.slice(0,8).join(' ')});
       syncLog('受信',{from:data.lastClient||'?',ver:data.appVer||'?',
         cache:(doc.metadata&&doc.metadata.fromCache)?1:0,
         pend:(doc.metadata&&doc.metadata.hasPendingWrites)?1:0,
