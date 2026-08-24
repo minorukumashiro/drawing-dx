@@ -654,7 +654,14 @@ function dxpDiag(){
   }).join(NL);
   var out=head+NL+body;
   console.log(out);
-  try{navigator.clipboard.writeText(out);toast('同期ログをコピーしました（'+_syncLog.length+'件）');}catch(e){}
+  try{
+    var p=navigator.clipboard&&navigator.clipboard.writeText(out);
+    if(p&&p.then)p.then(function(){
+      try{toast('同期ログをコピーしました（'+_syncLog.length+'件）');}catch(e){}
+    },function(){
+      console.log('※コピーできませんでした（コンソールに焦点があるため）。画面を一度クリックしてから再実行するか、上の出力を選択してコピーしてください。');
+    });
+  }catch(e){}
   return out;
 }
 function _fbLocalSig(){
@@ -1118,7 +1125,7 @@ function checkWatcherHealth(){
 function fbStartListener(){
   if(!fbEnabled)return;
   if(fbUnsubscribe)fbUnsubscribe();
-  fbUnsubscribe=fbDB.collection('workspaces').doc('default').onSnapshot(function(doc){
+  fbUnsubscribe=fbDB.collection('workspaces').doc('default').onSnapshot({includeMetadataChanges:false},function(doc){
     // ドキュメントが存在しない場合でもフラグをセット（push がブロックされないように）
     window._fbSnapshotReceived=true;
     checkWatcherHealth();
@@ -1137,6 +1144,8 @@ function fbStartListener(){
       // 全体上書きしてステータスを巻き戻すことがあるため記録する
       if(data.appVer&&data.appVer!==APP_VER)syncLog('版ちがい',{from:data.lastClient,ver:data.appVer,me:APP_VER});
       syncLog('受信',{from:data.lastClient||'?',ver:data.appVer||'?',
+        cache:(doc.metadata&&doc.metadata.fromCache)?1:0,
+        pend:(doc.metadata&&doc.metadata.hasPendingWrites)?1:0,
         srv:_syncStat(data.drawings,_syncWatch),
         base:_syncStat(fbBase&&fbBase.drawings,_syncWatch),
         loc:_syncStat(DRAWINGS,_syncWatch),
