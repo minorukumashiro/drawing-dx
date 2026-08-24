@@ -282,6 +282,10 @@ try{
   if(typeof firebase!=='undefined'){
     fbApp=firebase.initializeApp(FIREBASE_CONFIG);
     fbDB=firebase.firestore();
+    try{
+      // 通常の接続(WebChannel)が遮断される環境を自動判定し、ロングポーリングに切り替える
+      fbDB.settings({experimentalAutoDetectLongPolling:true,merge:true});
+    }catch(e){console.warn('Firestore settings failed:',e.message);}
     fbEnabled=true;
     console.log('Firebase initialized');
   }
@@ -607,7 +611,7 @@ function deduplicateInspections(){
 //   ・自分が削除した項目だけを消す（他端末が追加したものは消さない）
 // 書き込みはトランザクション内で「読み直し→マージ→書き込み」するため、
 // 送信直前に他端末が入れた変更も失われない。
-var APP_VER='20260824a'; // 書き込みに埋める版数。古い版のまま動いている端末の特定に使う。
+var APP_VER='20260824b'; // 書き込みに埋める版数。古い版のまま動いている端末の特定に使う。
 var fbBase=null; // マージの基準（最後にサーバーから受け取った状態のコピー）
 // 【重要】Firestore はオブジェクトのキーの並び順を保持しない（読むたびに順序が変わる）。
 // 素の JSON.stringify で比較すると「値は同じなのに違う」と誤判定し、端末同士が
@@ -866,6 +870,15 @@ function fbPushAll(skipImages){
   if(!window._fbSnapshotReceived){
     clearTimeout(window._fbSyncTimer);
     window._fbSyncTimer=setTimeout(function(){fbPushAll(skipImages);},3000);
+    return;
+  }
+  // 基準が未取得なら送信しない。この状態で送ると3方向マージが効かず、
+  // ローカルの内容で全体を上書きして他端末の変更を消してしまう。
+  if(!fbBase){
+    syncLog('送信保留',{理由:'基準未取得(受信できていない)'});
+    updateSyncStatus('error','サーバーからの受信ができていないため送信を保留しています');
+    clearTimeout(window._fbSyncTimer);
+    window._fbSyncTimer=setTimeout(function(){fbPushAll(skipImages);},5000);
     return;
   }
   // デモデータ（DEFAULT_DRAWINGS）をそのまま push しない
@@ -1142,6 +1155,7 @@ function fbStartListener(){
   fbUnsubscribe=fbDB.collection('workspaces').doc('default').onSnapshot({includeMetadataChanges:false},function(doc){
     // ドキュメントが存在しない場合でもフラグをセット（push がブロックされないように）
     window._fbSnapshotReceived=true;
+    window._fbListenRetry=0; // 受信できたので再接続の待ち時間をリセット
     checkWatcherHealth();
     if(!doc.exists)return;
     var data=doc.data();
@@ -1340,6 +1354,17 @@ function fbStartListener(){
   },function(err){
     updateSyncStatus('error',err.message);
     console.error('Firebase listener error:',err);
+    syncLog('★受信が停止',{理由:err.code||err.message});
+    // onSnapshot はエラー時に購読が終了する。放置すると以後ずっと他端末の変更が
+    // 届かないまま動き続け、古い内容で上書きする原因になるので必ず張り直す。
+    window._fbListenRetry=(window._fbListenRetry||0)+1;
+    var wait=Math.min(30000,1000*Math.pow(2,Math.min(5,window._fbListenRetry)));
+    clearTimeout(window._fbListenTimer);
+    window._fbListenTimer=setTimeout(function(){
+      syncLog('受信を再接続',{回数:window._fbListenRetry});
+      try{if(fbUnsubscribe)fbUnsubscribe();}catch(e){}
+      fbStartListener();
+    },wait);
   });
 }
 
