@@ -611,7 +611,7 @@ function deduplicateInspections(){
 //   ・自分が削除した項目だけを消す（他端末が追加したものは消さない）
 // 書き込みはトランザクション内で「読み直し→マージ→書き込み」するため、
 // 送信直前に他端末が入れた変更も失われない。
-var APP_VER='20260824b'; // 書き込みに埋める版数。古い版のまま動いている端末の特定に使う。
+var APP_VER='20260824c'; // 書き込みに埋める版数。古い版のまま動いている端末の特定に使う。
 var fbBase=null; // マージの基準（最後にサーバーから受け取った状態のコピー）
 // 【重要】Firestore はオブジェクトのキーの並び順を保持しない（読むたびに順序が変わる）。
 // 素の JSON.stringify で比較すると「値は同じなのに違う」と誤判定し、端末同士が
@@ -661,6 +661,23 @@ function syncLog(ev,info){
   if(info)Object.keys(info).forEach(function(k){r[k]=info[k];});
   _syncLog.push(r);
   if(_syncLog.length>300)_syncLog.shift();
+}
+// 接続できているかをその場で確認する。ログが空でも判断できるようにするため。
+function dxpStatus(){
+  var last=window._fbLastSnapAt?Math.round((Date.now()-window._fbLastSnapAt)/1000)+'秒前':'まだ受信なし';
+  var lines=[
+    '端末ID      : '+fbClientId(),
+    '版数        : '+APP_VER,
+    '受信の状態  : '+(window._fbSnapshotReceived?'受信あり':'未受信'),
+    '最後の受信  : '+last+'（受信回数 '+(window._fbSnapCount||0)+'）',
+    '比較の基準  : '+(fbBase?('あり（図面'+((fbBase.drawings||[]).length)+'件）'):'なし ← この状態では送信を保留します'),
+    '同期の表示  : '+fbSyncState,
+    '未送信の有無: rev='+_fbLocalRev+'/'+_fbSyncedRev+(_fbLocalRev!==_fbSyncedRev?' ← 未送信あり':' （なし）'),
+    '再接続の回数: '+(window._fbListenRetry||0),
+    '画面上の図面: '+DRAWINGS.length+'件'
+  ].join(String.fromCharCode(10));
+  console.log(lines);
+  return lines;
 }
 function dxpDiag(){
   var NL=String.fromCharCode(10);
@@ -1155,6 +1172,8 @@ function fbStartListener(){
   fbUnsubscribe=fbDB.collection('workspaces').doc('default').onSnapshot({includeMetadataChanges:false},function(doc){
     // ドキュメントが存在しない場合でもフラグをセット（push がブロックされないように）
     window._fbSnapshotReceived=true;
+    window._fbLastSnapAt=Date.now();
+    window._fbSnapCount=(window._fbSnapCount||0)+1;
     window._fbListenRetry=0; // 受信できたので再接続の待ち時間をリセット
     checkWatcherHealth();
     if(!doc.exists)return;
@@ -1213,6 +1232,9 @@ function fbStartListener(){
       return;
     }
     // ---- 初回受信: サーバーの内容をそのまま採用し、以後のマージ基準にする ----
+    syncLog('初回受信',{from:data.lastClient||'?',ver:data.appVer||'?',
+      cache:(doc.metadata&&doc.metadata.fromCache)?1:0,
+      図面:(data.drawings||[]).length});
     fbSetBase(data);
     if(data.drawings){
       DRAWINGS=data.drawings;DRAWINGS.forEach(function(d){if(d.status==='検図中')d.status='検討中';});
