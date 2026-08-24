@@ -607,7 +607,7 @@ function deduplicateInspections(){
 //   ・自分が削除した項目だけを消す（他端末が追加したものは消さない）
 // 書き込みはトランザクション内で「読み直し→マージ→書き込み」するため、
 // 送信直前に他端末が入れた変更も失われない。
-var APP_VER='20260807c'; // 書き込みに埋める版数。古い版のまま動いている端末の特定に使う。
+var APP_VER='20260824a'; // 書き込みに埋める版数。古い版のまま動いている端末の特定に使う。
 var fbBase=null; // マージの基準（最後にサーバーから受け取った状態のコピー）
 // 【重要】Firestore はオブジェクトのキーの並び順を保持しない（読むたびに順序が変わる）。
 // 素の JSON.stringify で比較すると「値は同じなのに違う」と誤判定し、端末同士が
@@ -624,6 +624,39 @@ function _fbJ(v){try{return JSON.stringify(_fbCanon(v))}catch(e){return '__ERR__
 function _fbClone(v){try{return v===undefined?v:JSON.parse(JSON.stringify(v))}catch(e){return v}}
 // 画面に表示されるデータ全体の署名。マージ適用の前後で比べ、変化が無ければ再描画を省く。
 // 書類は data(base64) を含まない meta 形で比較する（毎回数十MBを文字列化しないため）。
+// ===== 同期の診断ログ =====
+// 「ステータスが元に戻る」「チカチカする」の原因を実機で突き止めるための記録。
+// 画面には出さず、コンソールで dxpDiag() を実行すると直近の履歴を吐き出す。
+// dxpWatch(図面ID) を実行しておくと、その図面のステータスが
+// サーバー/基準/ローカル/マージ結果でどうなっているかを毎回記録する。
+var _syncLog=[],_syncWatch=null;
+function dxpWatch(id){
+  _syncWatch=(id==null?null:String(id));
+  try{toast(_syncWatch?('同期ログ: 図面ID '+_syncWatch+' の監視を開始'):'同期ログ: 監視を解除');}catch(e){}
+  return _syncWatch;
+}
+function _syncStat(arr,id){
+  if(!id||!Array.isArray(arr))return '-';
+  for(var i=0;i<arr.length;i++){if(arr[i]&&String(arr[i].id)===id)return String(arr[i].status);}
+  return 'なし';
+}
+function syncLog(ev,info){
+  var r={t:new Date().toTimeString().slice(0,8),ev:ev};
+  if(info)Object.keys(info).forEach(function(k){r[k]=info[k];});
+  _syncLog.push(r);
+  if(_syncLog.length>300)_syncLog.shift();
+}
+function dxpDiag(){
+  var NL=String.fromCharCode(10);
+  var head='端末='+fbClientId()+' 版='+APP_VER+' rev='+_fbLocalRev+'/'+_fbSyncedRev+' 監視ID='+(_syncWatch||'なし');
+  var body=_syncLog.map(function(r){
+    return Object.keys(r).map(function(k){return k+'='+r[k];}).join(' ');
+  }).join(NL);
+  var out=head+NL+body;
+  console.log(out);
+  try{navigator.clipboard.writeText(out);toast('同期ログをコピーしました（'+_syncLog.length+'件）');}catch(e){}
+  return out;
+}
 function _fbLocalSig(){
   return _fbJ(DRAWINGS)+_fbJ(TRASH)+_fbJ(relDocMeta())+_fbJ(inspMeta())+_fbJ(MASTERS)
     +_fbJ(WORKLOGS)+_fbJ(DELIVERIES)+_fbJ(ANNOTATIONS)+_fbJ(INVOICES)+String(nextId);
@@ -859,11 +892,13 @@ function pushMeta(){
     if(fbMetaSyncing){fbMetaSyncing=false;console.warn('meta push watchdog: reset');}
   },45000);
   var ref=fbDB.collection('workspaces').doc('default');
-  var merged=null;
+  var merged=null,_svSeen=null;
+  syncLog('送信開始',{rev:revAtStart,loc:_syncStat(DRAWINGS,_syncWatch),base:_syncStat(fbBase&&fbBase.drawings,_syncWatch)});
   try{
     fbDB.runTransaction(function(tx){
       return tx.get(ref).then(function(snap){
         var sv=(snap.exists&&snap.data())||{};
+        _svSeen=sv;
         merged=fbMergePayload(sv);
         var payload=_fbClone(merged);
         payload.lastModified=firebase.firestore.FieldValue.serverTimestamp();
@@ -877,11 +912,15 @@ function pushMeta(){
       // サーバーの現在値＝いま書き込んだマージ結果。次回マージの基準にする。
       fbSetBase(merged);
       fbLastLocalChange=Date.now();
+      syncLog('送信完了',{srvRead:_syncStat(_svSeen&&_svSeen.drawings,_syncWatch),wrote:_syncStat(merged.drawings,_syncWatch),rev:_fbLocalRev+'/'+_fbSyncedRev});
       if(_fbLocalRev===revAtStart){
         // 送信中にローカル変更が無ければ、マージ結果（他端末の変更を含む）を画面へ反映
+        var _pushSig=_fbLocalSig();
         fbApplyMerged(merged);
         saveLocalOnly();
-        render();
+        // 受信時と同じく、画面に出るデータが変わっていなければ描画し直さない。
+        // ここが無条件だったため、保存のたびに画面全体が作り直されてチカチカしていた。
+        if(_fbLocalSig()!==_pushSig)render();
       }else{
         // 送信中に操作があった → その変更を次のpushで送る（基準が更新済みなので差分で送られる）
         clearTimeout(window._fbSyncTimer);
@@ -1094,6 +1133,15 @@ function fbStartListener(){
       var _srvJ=_fbJ(data.drawings||[])+_fbJ(data.trash||[])+_fbJ(data.relatedDocuments||{})+_fbJ(data.inspections||{})+_fbJ(data.masters||{})+_fbJ(data.worklogs||[])+_fbJ(data.deliveries||[])+_fbJ(data.annotations||{});
       var _preSig=_fbLocalSig(); // 適用前の画面データ（再描画が要るかの判定用）
       var _merged=fbMergePayload(data);
+      // 古い版のまま動いている端末が混ざっていると、3方向マージを持たない実装が
+      // 全体上書きしてステータスを巻き戻すことがあるため記録する
+      if(data.appVer&&data.appVer!==APP_VER)syncLog('版ちがい',{from:data.lastClient,ver:data.appVer,me:APP_VER});
+      syncLog('受信',{from:data.lastClient||'?',ver:data.appVer||'?',
+        srv:_syncStat(data.drawings,_syncWatch),
+        base:_syncStat(fbBase&&fbBase.drawings,_syncWatch),
+        loc:_syncStat(DRAWINGS,_syncWatch),
+        mrg:_syncStat(_merged.drawings,_syncWatch),
+        rev:_fbLocalRev+'/'+_fbSyncedRev});
       var _mrgJ=_fbJ(_merged.drawings)+_fbJ(_merged.trash)+_fbJ(_merged.relatedDocuments)+_fbJ(_merged.inspections)+_fbJ(_merged.masters)+_fbJ(_merged.worklogs)+_fbJ(_merged.deliveries)+_fbJ(_merged.annotations);
       fbApplyMerged(_merged);
       fbSetBase(data); // 基準はあくまで「サーバーの状態」
@@ -3027,7 +3075,7 @@ function showBusy(msg){
 function hideBusy(){var el=document.getElementById('dxpBusy');if(el)el.style.display='none';}
 function openDetail(id){var d=DRAWINGS.find(function(x){return x.id===id});if(d){S.detail=Object.assign({},d,{_sim:0});render()}}
 function closeDetail(){S.detail=null;render()}
-function changeStatus(id,newStatus){var d=DRAWINGS.find(function(x){return x.id===id});if(!d)return;var prev=d.status;d.status=newStatus;if(newStatus==='納品済')d.lastAccess=new Date().toISOString().slice(0,10);markStatusEdit(id,d.status,d.lastAccess);if(S.detail&&S.detail.id===id){S.detail.status=newStatus;if(newStatus==='納品済')S.detail.lastAccess=d.lastAccess;}saveAll(true);if(newStatus==='納品済'&&prev!=='納品済'){openTranscribe(id);}else{render();}}
+function changeStatus(id,newStatus){var d=DRAWINGS.find(function(x){return x.id===id});if(!d)return;var prev=d.status;syncLog('操作',{id:id,from:prev,to:newStatus});d.status=newStatus;if(newStatus==='納品済')d.lastAccess=new Date().toISOString().slice(0,10);markStatusEdit(id,d.status,d.lastAccess);if(S.detail&&S.detail.id===id){S.detail.status=newStatus;if(newStatus==='納品済')S.detail.lastAccess=d.lastAccess;}saveAll(true);if(newStatus==='納品済'&&prev!=='納品済'){openTranscribe(id);}else{render();}}
 
 // ===== 納品カレンダー =====
 // 検索クリア
