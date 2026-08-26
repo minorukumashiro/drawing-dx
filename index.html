@@ -611,7 +611,7 @@ function deduplicateInspections(){
 //   ・自分が削除した項目だけを消す（他端末が追加したものは消さない）
 // 書き込みはトランザクション内で「読み直し→マージ→書き込み」するため、
 // 送信直前に他端末が入れた変更も失われない。
-var APP_VER='20260824d'; // 書き込みに埋める版数。古い版のまま動いている端末の特定に使う。
+var APP_VER='20260824e'; // 書き込みに埋める版数。古い版のまま動いている端末の特定に使う。
 var fbBase=null; // マージの基準（最後にサーバーから受け取った状態のコピー）
 // 【重要】Firestore はオブジェクトのキーの並び順を保持しない（読むたびに順序が変わる）。
 // 素の JSON.stringify で比較すると「値は同じなのに違う」と誤判定し、端末同士が
@@ -1797,6 +1797,17 @@ function getPdfSrc(id){
   return null;
 }
 function simColor(v){return v>=80?"#1B8C65":v>=50?"#B06E15":"#888"}
+// 検索用の正規化。実データのサイズ表記は「Φ16」「φ30」「20×380」「75x198」「φ30×255Ｌ」の
+// ように、大小のφ・全角/半角・×とxが混在している。そのまま部分一致させると
+// 「φ16」と打っても「Φ16」が出ないため、検索語と対象の両方を同じ形に均してから比較する。
+function normSearch(s){
+  return String(s==null?'':s)
+    .replace(/[！-～]/g,function(c){return String.fromCharCode(c.charCodeAt(0)-0xFEE0);}) // 全角英数記号→半角
+    .replace(/[ΦφϕØø⌀∅]/g,'φ') // Φ ϕ Ø ø ⌀ ∅ → φ
+    .replace(/[×✕✖*]/g,'x') // × ✕ ✖ ＊ → x
+    .replace(/[s　]+/g,'') // 空白は無視
+    .toLowerCase();
+}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}
 function isMobileDevice(){return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)||window.innerWidth<=768}
 function todayLocal(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
@@ -1871,7 +1882,7 @@ function render(){
   if(!MASTERS.worklogWorkers)MASTERS.worklogWorkers=[];
   if(!MASTERS.worklogMachines)MASTERS.worklogMachines=[];
   var app=document.getElementById('app'),sts=["待機","検討中","見積済","製造中","完了","納品済"],stC={"待機":"#6B7280","検討中":"#185FA5","見積済":"#B06E15","製造中":"var(--ac)","完了":"#0E7490","納品済":"#1B8C65"},stB={"待機":"#EEF0F2","検討中":"#E6F1FB","見積済":"#FDF3E0","製造中":"#EEEDFE","完了":"#E0F7FA","納品済":"#E8F5EE"},cats=["すべて"].concat(Array.from(new Set(DRAWINGS.map(function(d){return d.cat}))));
-  var fl=DRAWINGS.filter(function(d){if(S.fcat!=='すべて'&&d.cat!==S.fcat)return false;if(S.clientFilter){var cf=S.clientFilter.toLowerCase();if((d.client||'').toLowerCase().indexOf(cf)<0)return false}if(S.search){var q=S.search.toLowerCase();return d.name.toLowerCase().indexOf(q)>=0||d.number.toLowerCase().indexOf(q)>=0||d.mat.toLowerCase().indexOf(q)>=0||d.client.toLowerCase().indexOf(q)>=0||d.size.toLowerCase().indexOf(q)>=0||(d.tags||[]).join(' ').toLowerCase().indexOf(q)>=0}return true});
+  var fl=DRAWINGS.filter(function(d){if(S.fcat!=='すべて'&&d.cat!==S.fcat)return false;if(S.clientFilter){var cf=S.clientFilter.toLowerCase();if((d.client||'').toLowerCase().indexOf(cf)<0)return false}if(S.search){var q=normSearch(S.search);if(!q)return true;return normSearch(d.name).indexOf(q)>=0||normSearch(d.number).indexOf(q)>=0||normSearch(d.mat).indexOf(q)>=0||normSearch(d.client).indexOf(q)>=0||normSearch(d.size).indexOf(q)>=0||normSearch((d.tags||[]).join(' ')).indexOf(q)>=0}return true});
   var h='<div class="nav"><div class="nav-logo"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg></div><div><div class="nav-title">図面DXプラットフォーム</div><div class="nav-sub">AI図面管理・類似検索</div></div><div class="nav-tabs">';
   var _mobile=isMobileDevice();
   // If mobile and current tab is 'master', switch to 'board'
@@ -2031,7 +2042,7 @@ function render(){
       h+='</div>';
     }
     // Filter bar
-    h+='<div class="filter-bar"><input id="searchBox" placeholder="図番・品名・材質で検索..." value="'+esc(S.search)+'">';
+    h+='<div class="filter-bar"><input id="searchBox" placeholder="図番・品名・材質・サイズで検索..." value="'+esc(S.search)+'">';
     // Client filter text input
     h+='<input id="clientFilterBox" placeholder="取引先で絞込..." value="'+esc(S.clientFilter||'')+'" style="padding:8px 12px;border:1px solid var(--bd);border-radius:10px;font-size:13px;background:var(--bg);box-shadow:var(--shadow);max-width:200px;flex:1;color:'+(S.clientFilter?'var(--ac)':'var(--tx)')+';font-weight:'+(S.clientFilter?'600':'normal')+'">';
     cats.forEach(function(c){h+='<button class="f-btn '+(S.fcat===c?'on':'off')+'" onclick="S.fcat=\''+c+'\';render()">'+c+'</button>'});
