@@ -611,7 +611,7 @@ function deduplicateInspections(){
 //   ・自分が削除した項目だけを消す（他端末が追加したものは消さない）
 // 書き込みはトランザクション内で「読み直し→マージ→書き込み」するため、
 // 送信直前に他端末が入れた変更も失われない。
-var APP_VER='20260824c'; // 書き込みに埋める版数。古い版のまま動いている端末の特定に使う。
+var APP_VER='20260824d'; // 書き込みに埋める版数。古い版のまま動いている端末の特定に使う。
 var fbBase=null; // マージの基準（最後にサーバーから受け取った状態のコピー）
 // 【重要】Firestore はオブジェクトのキーの並び順を保持しない（読むたびに順序が変わる）。
 // 素の JSON.stringify で比較すると「値は同じなのに違う」と誤判定し、端末同士が
@@ -5685,7 +5685,7 @@ render();
   // スタイル注入
   var st=document.createElement('style');
   st.textContent=[
-    '#aiFab{position:fixed;right:20px;bottom:20px;z-index:90;width:56px;height:56px;border-radius:50%;background:var(--ac);color:#fff;border:none;box-shadow:var(--shadow-lg);cursor:pointer;font-size:24px;display:none;align-items:center;justify-content:center;transition:transform .15s}',
+    '#aiFab{position:fixed;right:20px;bottom:20px;z-index:90;touch-action:none;width:56px;height:56px;border-radius:50%;background:var(--ac);color:#fff;border:none;box-shadow:var(--shadow-lg);cursor:pointer;font-size:24px;display:none;align-items:center;justify-content:center;transition:transform .15s}',
     '#aiFab:hover{transform:scale(1.06)}',
     '#aiPanel{position:fixed;right:20px;bottom:88px;z-index:95;width:400px;max-width:calc(100vw - 32px);height:560px;max-height:calc(100vh - 120px);background:var(--bg2);border:1px solid var(--bd);border-radius:16px;box-shadow:var(--shadow-lg);display:none;flex-direction:column;overflow:hidden}',
     '#aiPanel.open{display:flex;animation:aiPop .18s ease}',
@@ -5900,6 +5900,76 @@ render();
   panel.querySelector('#aiClose').onclick=function(){panel.classList.remove('open')};
   panel.querySelector('#aiClear').onclick=function(){msgs=[];pendingImg=null;pendingLabel='';lastError=null;renderAttach();renderMsgs()};
   fab.onclick=function(){panel.classList.toggle('open');if(panel.classList.contains('open')){renderMsgs();setTimeout(function(){input.focus()},50)}};
+
+  // AIボタンをドラッグで自由に移動できるようにする。スマホは持ち方や画面サイズで
+  // 親指の届く位置が人それぞれで、既定の右下だと押しにくい・他のボタンに重なるため。
+  // 位置は端末ごとに localStorage に保存し、次に開いたときも同じ場所に出す。
+  (function(){
+    var KEY='dxp_aiFabPos';
+    var THRESHOLD=6; // これ未満の移動はタップ扱い。少し指がぶれても普通に開けるように
+    var dragging=false,moved=false,startX=0,startY=0,baseX=0,baseY=0;
+
+    function clamp(v,lo,hi){return v<lo?lo:(v>hi?hi:v);}
+    // 画面外へ出さない。left/top指定に切り替えるので right/bottom は無効化する
+    function applyPos(x,y){
+      var w=fab.offsetWidth||56,h=fab.offsetHeight||56,m=4;
+      x=clamp(x,m,Math.max(m,window.innerWidth-w-m));
+      y=clamp(y,m,Math.max(m,window.innerHeight-h-m));
+      fab.style.left=x+'px';fab.style.top=y+'px';
+      fab.style.right='auto';fab.style.bottom='auto';
+      return {x:x,y:y};
+    }
+    function savePos(p){try{localStorage.setItem(KEY,JSON.stringify(p));}catch(e){}}
+    function loadPos(){
+      try{var v=JSON.parse(localStorage.getItem(KEY));
+        return (v&&typeof v.x==='number'&&typeof v.y==='number')?v:null;}catch(e){return null;}
+    }
+
+    var saved=loadPos();
+    if(saved)applyPos(saved.x,saved.y);
+
+    fab.addEventListener('pointerdown',function(e){
+      dragging=true;moved=false;
+      var r=fab.getBoundingClientRect();
+      baseX=r.left;baseY=r.top;startX=e.clientX;startY=e.clientY;
+      try{fab.setPointerCapture(e.pointerId);}catch(_){}
+    });
+    fab.addEventListener('pointermove',function(e){
+      if(!dragging)return;
+      var dx=e.clientX-startX,dy=e.clientY-startY;
+      if(!moved&&(Math.abs(dx)+Math.abs(dy))<THRESHOLD)return;
+      moved=true;
+      e.preventDefault();
+      applyPos(baseX+dx,baseY+dy);
+    });
+    function endDrag(e){
+      if(!dragging)return;
+      dragging=false;
+      try{fab.releasePointerCapture(e.pointerId);}catch(_){}
+      if(moved){var r=fab.getBoundingClientRect();savePos(applyPos(r.left,r.top));}
+    }
+    fab.addEventListener('pointerup',endDrag);
+    fab.addEventListener('pointercancel',endDrag);
+
+    // 動かした直後のクリックでチャットが開かないようにする。
+    // 同じ要素に付いた fab.onclick も止めるため stopImmediatePropagation を使う。
+    fab.addEventListener('click',function(e){
+      if(moved){e.stopImmediatePropagation();e.preventDefault();moved=false;}
+    },true);
+
+    // 画面回転やキーボード表示で表示領域が変わったとき、枠外に取り残されないよう引き戻す
+    window.addEventListener('resize',function(){
+      var p=loadPos();if(!p)return;
+      savePos(applyPos(p.x,p.y));
+    });
+
+    // 位置をリセットしたいとき用（コンソールから dxpResetFab()）
+    window.dxpResetFab=function(){
+      try{localStorage.removeItem(KEY);}catch(e){}
+      fab.style.left='';fab.style.top='';fab.style.right='';fab.style.bottom='';
+      return 'AIボタンの位置を既定（右下）に戻しました';
+    };
+  })();
 
   // ログイン後にだけボタンを表示
   var iv=setInterval(function(){
