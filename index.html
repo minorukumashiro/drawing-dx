@@ -980,7 +980,7 @@ function pushMeta(){
       updateSyncStatus('synced');
     }).catch(function(e){
       fbMetaSyncing=false;clearTimeout(window._fbMetaWatchdog);
-      updateSyncStatus('error',e.message);
+      updateSyncStatus('error',(e&&e.code?'['+e.code+'] ':'')+((e&&e.message)||''));
       console.error('Firebase push failed:',e);
       // 未送信の変更が消えないよう、間隔を空けて自動再試行する
       if(_fbPushRetry<6){
@@ -1374,7 +1374,7 @@ function fbStartListener(){
     // Pull missing images from Firebase (background)
     fbPullMissingImages();
   },function(err){
-    updateSyncStatus('error',err.message);
+    updateSyncStatus('error',(err&&err.code?'['+err.code+'] ':'')+((err&&err.message)||''));
     console.error('Firebase listener error:',err);
     syncLog('★受信が停止',{理由:err.code||err.message});
     // onSnapshot はエラー時に購読が終了する。放置すると以後ずっと他端末の変更が
@@ -1473,6 +1473,7 @@ async function forceResyncImages(){
 }
 
 var fbSyncState='connecting';
+var _fbErrDetail=''; // 直近の同期エラーの内容（err.code等）。バッジに表示してiPad実機でも原因コードが見えるようにする。
 function showDbg(msg){
   var el=document.createElement('div');
   el.style.cssText='position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a1a1a;color:#ff6;padding:10px 16px;border-radius:8px;font-size:12px;z-index:9999;max-width:90vw;word-break:break-all;border:1px solid #555';
@@ -1482,6 +1483,7 @@ function showDbg(msg){
 }
 function updateSyncStatus(state,msg){
   fbSyncState=state;
+  _fbErrDetail=(state==='error'&&msg)?String(msg).slice(0,60):'';
   var el=document.getElementById('fbSyncStatus');
   if(!el)return;
   var cfg={
@@ -1492,7 +1494,7 @@ function updateSyncStatus(state,msg){
   };
   var c=cfg[state]||cfg.offline;
   el.style.color=c.c;
-  el.textContent=c.t;
+  el.textContent=c.t+(_fbErrDetail?' ('+_fbErrDetail+')':'');
   if(msg)el.title=msg;
 }
 
@@ -1889,7 +1891,7 @@ function render(){
   if(_mobile&&(S.tab==='master'||S.tab==='analytics'))S.tab='board';
   var _tabs=_mobile?[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'},{k:'worklog',l:'作業日報'},{k:'delivery',l:'納品カレンダー'}]:[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'},{k:'worklog',l:'作業日報'},{k:'delivery',l:'納品カレンダー'},{k:'analytics',l:'生産性分析'},{k:'master',l:'マスター管理'}];
   _tabs.forEach(function(t){h+='<button class="nav-tab'+(S.tab===t.k?' active':'')+'" onclick="setTab(\''+t.k+'\')">'+t.l+'</button>'});
-  var _ssc=(function(){var cm={connecting:'#0066CC',pushing:'#0066CC',synced:'#1B8C65',error:'#D70015',offline:'#86868b'};var tm={connecting:'⟳ 接続中...',pushing:'⟳ 同期中...',synced:'✓ 同期済',error:'⚠ 同期エラー',offline:'○ オフライン'};return{c:cm[fbSyncState]||'#86868b',t:tm[fbSyncState]||'○ オフライン'};})();
+  var _ssc=(function(){var cm={connecting:'#0066CC',pushing:'#0066CC',synced:'#1B8C65',error:'#D70015',offline:'#86868b'};var tm={connecting:'⟳ 接続中...',pushing:'⟳ 同期中...',synced:'✓ 同期済',error:'⚠ 同期エラー'+(_fbErrDetail?' ('+_fbErrDetail+')':''),offline:'○ オフライン'};return{c:cm[fbSyncState]||'#86868b',t:tm[fbSyncState]||'○ オフライン'};})();
   h+='<div id="fbSyncStatus" style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;background:var(--bg2);color:'+_ssc.c+';white-space:nowrap;cursor:pointer" title="タップして再取得" onclick="mobileForcePull()">'+_ssc.t+'</div>';
   if(typeof AUTH_USER!=='undefined'&&AUTH_USER)h+='<button style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;border:1px solid var(--bd);background:var(--bg2);color:var(--tx3);white-space:nowrap;cursor:pointer" title="'+esc(AUTH_USER.email||'')+' でログイン中" onclick="doLogout()">ログアウト</button>';
   if(fbEnabled&&!_mobile)h+='<button style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;border:none;background:#1B8C65;color:#fff;white-space:nowrap;cursor:pointer" onclick="forcePushToFirebase()" title="PCのデータをFirebaseに強制送信">📤 全データ送信</button>';
