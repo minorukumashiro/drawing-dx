@@ -819,6 +819,7 @@ function allowSnapshotPush(){
 }
 // サーバー側の状態を次回マージの基準として記録する
 function fbSetBase(d){
+  window._fbBaseWaitStart=null; // 実データを受信できたので「未受信で待機中」の計測をリセット
   d=d||{};
   fbBase={
     drawings:_fbClone(Array.isArray(d.drawings)?d.drawings:[]),
@@ -892,8 +893,11 @@ function fbPushAll(skipImages){
   // 基準が未取得なら送信しない。この状態で送ると3方向マージが効かず、
   // ローカルの内容で全体を上書きして他端末の変更を消してしまう。
   if(!fbBase){
-    syncLog('送信保留',{理由:'基準未取得(受信できていない)'});
-    updateSyncStatus('error','サーバーからの受信ができていないため送信を保留しています');
+    if(!window._fbBaseWaitStart)window._fbBaseWaitStart=Date.now();
+    var _waitSec=Math.round((Date.now()-window._fbBaseWaitStart)/1000);
+    var _detail='待機'+_waitSec+'秒/再接続'+(window._fbListenRetry||0)+'回/'+(window._fbLastListenErr?('エラー:'+window._fbLastListenErr):'エラー未検出');
+    syncLog('送信保留',{理由:'基準未取得(受信できていない)',詳細:_detail});
+    updateSyncStatus('error','サーバーからの受信ができていないため送信を保留しています ／ '+_detail);
     clearTimeout(window._fbSyncTimer);
     window._fbSyncTimer=setTimeout(function(){fbPushAll(skipImages);},5000);
     return;
@@ -1374,6 +1378,7 @@ function fbStartListener(){
     // Pull missing images from Firebase (background)
     fbPullMissingImages();
   },function(err){
+    window._fbLastListenErr=(err&&err.code)?err.code:((err&&err.message)||'不明');
     updateSyncStatus('error',(err&&err.code?'['+err.code+'] ':'')+((err&&err.message)||''));
     console.error('Firebase listener error:',err);
     syncLog('★受信が停止',{理由:err.code||err.message});
@@ -1483,7 +1488,7 @@ function showDbg(msg){
 }
 function updateSyncStatus(state,msg){
   fbSyncState=state;
-  _fbErrDetail=(state==='error'&&msg)?String(msg).slice(0,60):'';
+  _fbErrDetail=(state==='error'&&msg)?String(msg).slice(0,100):'';
   var el=document.getElementById('fbSyncStatus');
   if(!el)return;
   var cfg={
