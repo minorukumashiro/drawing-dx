@@ -283,8 +283,13 @@ try{
     fbApp=firebase.initializeApp(FIREBASE_CONFIG);
     fbDB=firebase.firestore();
     try{
-      // 通常の接続(WebChannel)が遮断される環境を自動判定し、ロングポーリングに切り替える
-      fbDB.settings({experimentalAutoDetectLongPolling:true,merge:true});
+      // 通常の接続(WebChannel)は一部の社内プロキシ/ファイアウォールでエラーも出さず無応答のまま
+      // 遮断されることがあり、その場合 experimentalAutoDetectLongPolling の自動判定では
+      // 切り替わらない（2026-09 iPad事例で確認）。常時ロングポーリングを強制して回避する。
+      // merge:true を付けると、なぜか experimentalAutoDetectLongPolling の既定値とマージされ
+      // 「両方は併用できない」エラーになり設定が一切適用されなかった（実機テストで判明）。
+      // ここは初回の唯一の settings() 呼び出しなので merge は不要。
+      fbDB.settings({experimentalForceLongPolling:true});
     }catch(e){console.warn('Firestore settings failed:',e.message);}
     fbEnabled=true;
     console.log('Firebase initialized');
