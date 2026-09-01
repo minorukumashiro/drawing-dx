@@ -1441,6 +1441,46 @@ async function fbPullOneImage(id){
   finally{delete window._fbImgFetching[id];}
 }
 
+// 画面内(またはその近く)に実際に入った画像だけを、同時実行数を絞って取得するためのキュー。
+// 図面一覧はDOM仮想化をしておらず、絞り込み無しだと数百件の[data-scanimg]要素が
+// 一度に存在しうる。querySelectorAllした全要素へ即fetchすると「表示された分だけ」の
+// つもりがまた全件同時取得になってしまうため、IntersectionObserverで実際に交差した
+// 要素だけをキューへ積み、同時実行数(FB_IMG_CONCURRENCY)を絞って取得する。
+var FB_IMG_CONCURRENCY=4;
+window._fbImgQueue=window._fbImgQueue||[];
+window._fbImgActive=window._fbImgActive||0;
+function _fbEnqueueImage(id){
+  id=String(id);
+  if(window._fbImgFetching[id]||window._fbImgQueue.indexOf(id)>=0)return;
+  window._fbImgQueue.push(id);
+  _fbDrainImageQueue();
+}
+function _fbDrainImageQueue(){
+  while(window._fbImgActive<FB_IMG_CONCURRENCY&&window._fbImgQueue.length){
+    var id=window._fbImgQueue.shift();
+    window._fbImgActive++;
+    fbPullOneImage(id).then(function(ok){
+      window._fbImgActive--;
+      if(ok)render();
+      _fbDrainImageQueue();
+    });
+  }
+}
+window._fbImgObserver=null;
+function _fbObserveForImage(el){
+  if(!('IntersectionObserver' in window)){_fbEnqueueImage(el.getAttribute('data-scanimg'));return;}
+  if(!window._fbImgObserver){
+    window._fbImgObserver=new IntersectionObserver(function(entries){
+      entries.forEach(function(entry){
+        if(!entry.isIntersecting)return;
+        window._fbImgObserver.unobserve(entry.target);
+        _fbEnqueueImage(entry.target.getAttribute('data-scanimg'));
+      });
+    },{rootMargin:'300px'});
+  }
+  window._fbImgObserver.observe(el);
+}
+
 // Pull images from Firebase that aren't in local IndexedDB yet, or whose imgVer changed
 // 【重要】2026-09 iPadの強制終了事故: 図面が数百件規模になった端末で、画像を1件も
 // キャッシュしていない状態から起動すると、以前はここで「未取得の全件」を1回のループで
@@ -2554,6 +2594,9 @@ function render(){
 }
 
 function inject(){setTimeout(function(){
+  // render()のたびにDOMが作り直されるため、前回分の監視対象(既にDOMから外れている要素)を
+  // 引きずらないようリセットしてから、今回のDOMにある要素だけを監視し直す。
+  if(window._fbImgObserver)window._fbImgObserver.disconnect();
   document.querySelectorAll('[data-scanimg]').forEach(function(el){
     var id=+el.getAttribute('data-scanimg');
     var url=getImgUrl(id);
@@ -2561,10 +2604,13 @@ function inject(){setTimeout(function(){
       var cur=el.getAttribute('src')||'';
       if(!cur||cur.length<10)el.src=url;
     }else if(fbEnabled){
-      // 自動先読み(fbPullMissingImages)が対象外にした画像でも、実際に画面に
-      // 表示された分だけはその場で個別取得する（全件を一度にメモリへ載せない）。
+      // 【重要】2026-09 修正時のバグ: 図面一覧は仮想スクロールをしておらず、
+      // フィルタ無しだと743件ぶんの[data-scanimg]が一度にDOMへ生成される。
+      // ここで querySelectorAll した全要素へ即fetchをかけると「画面に表示された
+      // 分だけ」のつもりが実質また全件同時取得になり、先読み制限の意味が無かった。
+      // IntersectionObserverで実際に画面内(またはその近く)に来た要素だけを対象にする。
       var d=DRAWINGS.find(function(x){return x.id===id});
-      if(d&&d.scanned)fbPullOneImage(id).then(function(ok){if(ok)render();});
+      if(d&&d.scanned)_fbObserveForImage(el);
     }
   });
   document.querySelectorAll('[data-pdf]').forEach(function(el){
@@ -4792,34 +4838,42 @@ function compressImage(dataUrl,cb,targetBytes){
   img.onerror=function(){cb(dataUrl);}; // 読み込み失敗時は元データをそのまま返す
   img.src=dataUrl;
 }
+// 【重要】2026-09 画像OOM事故と同根の問題: このリストの「未取得ぶん」を無制限に
+// 並列fetchすると、対象が多い端末(現状219件)でメモリ/同時接続を圧迫する。
+// 1回の呼び出しでは少数だけ処理し、残りは次のsnapshot受信時の再呼び出しで徐々に揃える。
+var FB_INSP_RDOC_BATCH=20;
 function fbLoadInspectionFiles(){
   if(!fbEnabled)return;
+  var toFetch=[],toBackup=[];
   Object.keys(inspectionReports).forEach(function(drawingId){
     (inspectionReports[drawingId]||[]).forEach(function(r){
       if(!r.fileId)return;
-      if(!r.data){
-        // ローカルにデータなし → Firestoreから取得
-        fbDB.collection('workspaces').doc('insp_'+r.fileId).get().then(function(doc){
-          if(doc.exists){
-            r.data=doc.data().data;
-            dbPut('meta','inspections',inspectionReports);
-            render();
-          }
-        }).catch(function(e){console.warn('insp load failed:',e.message);});
-      } else {
-        // ローカルにデータあり → Firestoreに存在しない場合は再アップロード（ルール期限切れ中の未保存分を救済）
-        fbDB.collection('workspaces').doc('insp_'+r.fileId).get().then(function(doc){
-          if(!doc.exists){
-            var entry=inspectionReports[drawingId]&&inspectionReports[drawingId].find(function(x){return x.fileId===r.fileId;});
-            if(entry&&entry.data){
-              fbDB.collection('workspaces').doc('insp_'+r.fileId).set({
-                drawingId:+drawingId,name:entry.name,date:entry.date,type:entry.type,data:entry.data
-              }).catch(function(e){console.warn('insp backup failed:',e.message);try{toast('⚠ 検査報告書ファイルのクラウド保存に失敗（この端末にのみ保存されています）');}catch(_){}});
-            }
-          }
-        }).catch(function(e){console.warn('insp check failed:',e.message);});
-      }
+      if(!r.data)toFetch.push(r);else toBackup.push({drawingId:drawingId,r:r});
     });
+  });
+  toFetch.slice(0,FB_INSP_RDOC_BATCH).forEach(function(r){
+    // ローカルにデータなし → Firestoreから取得
+    fbDB.collection('workspaces').doc('insp_'+r.fileId).get().then(function(doc){
+      if(doc.exists){
+        r.data=doc.data().data;
+        dbPut('meta','inspections',inspectionReports);
+        render();
+      }
+    }).catch(function(e){console.warn('insp load failed:',e.message);});
+  });
+  toBackup.slice(0,FB_INSP_RDOC_BATCH).forEach(function(o){
+    var drawingId=o.drawingId,r=o.r;
+    // ローカルにデータあり → Firestoreに存在しない場合は再アップロード（ルール期限切れ中の未保存分を救済）
+    fbDB.collection('workspaces').doc('insp_'+r.fileId).get().then(function(doc){
+      if(!doc.exists){
+        var entry=inspectionReports[drawingId]&&inspectionReports[drawingId].find(function(x){return x.fileId===r.fileId;});
+        if(entry&&entry.data){
+          fbDB.collection('workspaces').doc('insp_'+r.fileId).set({
+            drawingId:+drawingId,name:entry.name,date:entry.date,type:entry.type,data:entry.data
+          }).catch(function(e){console.warn('insp backup failed:',e.message);try{toast('⚠ 検査報告書ファイルのクラウド保存に失敗（この端末にのみ保存されています）');}catch(_){}});
+        }
+      }
+    }).catch(function(e){console.warn('insp check failed:',e.message);});
   });
 }
 // 検査報告書(kind='insp')と関連書類(kind='rdoc')の共通取り込み処理。
@@ -4947,30 +5001,34 @@ function delInspection(drawingId,idx){
 
 function fbLoadRelatedDocFiles(){
   if(!fbEnabled)return;
+  var toFetch=[],toBackup=[];
   Object.keys(relatedDocuments).forEach(function(drawingId){
     (relatedDocuments[drawingId]||[]).forEach(function(r){
       if(!r.fileId)return;
-      if(!r.data){
-        fbDB.collection('workspaces').doc('rdoc_'+r.fileId).get().then(function(doc){
-          if(doc.exists){
-            r.data=doc.data().data;
-            dbPut('meta','relatedDocuments',relatedDocuments);
-            render();
-          }
-        }).catch(function(e){console.warn('rdoc load failed:',e.message);});
-      } else {
-        fbDB.collection('workspaces').doc('rdoc_'+r.fileId).get().then(function(doc){
-          if(!doc.exists){
-            var entry=relatedDocuments[drawingId]&&relatedDocuments[drawingId].find(function(x){return x.fileId===r.fileId;});
-            if(entry&&entry.data){
-              fbDB.collection('workspaces').doc('rdoc_'+r.fileId).set({
-                drawingId:+drawingId,name:entry.name,date:entry.date,type:entry.type,data:entry.data
-              }).catch(function(e){console.warn('rdoc backup failed:',e.message);try{toast('⚠ 関連書類ファイルのクラウド保存に失敗（この端末にのみ保存されています）');}catch(_){}});
-            }
-          }
-        }).catch(function(e){console.warn('rdoc check failed:',e.message);});
-      }
+      if(!r.data)toFetch.push(r);else toBackup.push({drawingId:drawingId,r:r});
     });
+  });
+  toFetch.slice(0,FB_INSP_RDOC_BATCH).forEach(function(r){
+    fbDB.collection('workspaces').doc('rdoc_'+r.fileId).get().then(function(doc){
+      if(doc.exists){
+        r.data=doc.data().data;
+        dbPut('meta','relatedDocuments',relatedDocuments);
+        render();
+      }
+    }).catch(function(e){console.warn('rdoc load failed:',e.message);});
+  });
+  toBackup.slice(0,FB_INSP_RDOC_BATCH).forEach(function(o){
+    var drawingId=o.drawingId,r=o.r;
+    fbDB.collection('workspaces').doc('rdoc_'+r.fileId).get().then(function(doc){
+      if(!doc.exists){
+        var entry=relatedDocuments[drawingId]&&relatedDocuments[drawingId].find(function(x){return x.fileId===r.fileId;});
+        if(entry&&entry.data){
+          fbDB.collection('workspaces').doc('rdoc_'+r.fileId).set({
+            drawingId:+drawingId,name:entry.name,date:entry.date,type:entry.type,data:entry.data
+          }).catch(function(e){console.warn('rdoc backup failed:',e.message);try{toast('⚠ 関連書類ファイルのクラウド保存に失敗（この端末にのみ保存されています）');}catch(_){}});
+        }
+      }
+    }).catch(function(e){console.warn('rdoc check failed:',e.message);});
   });
 }
 function uploadRelatedDoc(drawingId){
