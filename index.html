@@ -1400,57 +1400,72 @@ function fbStartListener(){
   });
 }
 
+// 1件分の画像をFirebaseから取得してメモリ(scannedImages等)とIndexedDBへ反映する。
+// fbPullMissingImages（自動の一括先読み）と inject（表示中サムネイルの遅延取得）の両方から使う共通処理。
+window._fbImgFetching=window._fbImgFetching||{}; // 同時に同じidを二重取得しないためのフラグ
+async function fbPullOneImage(id){
+  id=String(id);
+  if(window._fbImgFetching[id])return false;
+  window._fbImgFetching[id]=true;
+  try{
+    var snap=await fbDB.collection('workspaces').doc('default').collection('images').doc(id).get();
+    if(!snap.exists)return false;
+    var data=snap.data();
+    if(data.image){
+      scannedImages[id]=data.image;
+      dbPut('images',id,data.image);
+    }
+    if(data.pdf){
+      scannedPdfs[id]=data.pdf;
+      dbPut('meta','scannedPdfs',scannedPdfs);
+    }
+    if(data.thumb){
+      pdfThumbnails[id]=data.thumb;
+      dbPut('meta','pdfThumbs',pdfThumbnails);
+    }
+    // ローカルの imgVer を更新して次回の不要な再取得を防ぐ
+    var dObj=DRAWINGS.find(function(x){return String(x.id)===id});
+    if(dObj&&dObj.imgVer){
+      _localImgVer[id]=dObj.imgVer;
+      try{localStorage.setItem('dxp_localImgVer',JSON.stringify(_localImgVer));}catch(e){}
+    }
+    // Firebaseから取得した画像を「同期済み」としてマーク → モバイル側が fbPushAll 時に再アップロードしないようにする
+    if(!window._fbSyncedImages)window._fbSyncedImages={};
+    var fetchedImg=scannedImages[id];
+    var fetchedPdf=scannedPdfs[id];
+    var fetchedThumb=pdfThumbnails[id];
+    var fetchedPdfLen=fetchedPdf&&typeof fetchedPdf==='string'?fetchedPdf.length:0;
+    window._fbSyncedImages[id]=(fetchedImg?fetchedImg.length:0)+'_'+fetchedPdfLen+'_'+(fetchedThumb?fetchedThumb.length:0);
+    return true;
+  }catch(e){console.warn('Pull failed for',id,':',e.message);return false;}
+  finally{delete window._fbImgFetching[id];}
+}
+
 // Pull images from Firebase that aren't in local IndexedDB yet, or whose imgVer changed
+// 【重要】2026-09 iPadの強制終了事故: 図面が数百件規模になった端末で、画像を1件も
+// キャッシュしていない状態から起動すると、以前はここで「未取得の全件」を1回のループで
+// 際限なく取り込み、scannedImages(メモリ)がGB近くまで膨れ上がってSafariがタブごと
+// 強制終了していた。自動の先読みは直近アクセス順に少数だけへ絞り、残りは inject() 側の
+// 「実際に画面に表示された分だけ」の遅延取得に任せる。
+var FB_IMG_AUTO_PULL_LIMIT=40;
 async function fbPullMissingImages(){
   if(!fbEnabled||!DRAWINGS)return;
-  // mobileForcePull 経由の場合は全スキャン済み図面を対象にする（1回限り）
-  var forcePull=!!window._forcePullImages;
-  window._forcePullImages=false;
-  var missingIds=[];
+  var missing=[];
   DRAWINGS.forEach(function(d){
     var id=d.id;
     var localHasImage=scannedImages[id]||scannedPdfs[id];
-    // 画像未取得 or imgVer がローカル記録より新しい or 強制再取得フラグ
     var imgVerStale=d.imgVer&&(d.imgVer>(_localImgVer[String(id)]||0));
-    if(d.scanned&&(!localHasImage||imgVerStale||forcePull)){
-      missingIds.push(String(id));
+    if(d.scanned&&(!localHasImage||imgVerStale)){
+      missing.push(d);
     }
   });
-  if(missingIds.length===0)return;
+  if(missing.length===0)return;
+  // 直近に触った図面ほど見られる可能性が高いので優先。それ以外は表示された時に個別取得する。
+  missing.sort(function(a,b){return(b.lastAccess||b.date||'')<(a.lastAccess||a.date||'')?-1:1;});
+  var batch=missing.slice(0,FB_IMG_AUTO_PULL_LIMIT);
 
-  for(var i=0;i<missingIds.length;i++){
-    var id=missingIds[i];
-    try{
-      var snap=await fbDB.collection('workspaces').doc('default').collection('images').doc(id).get();
-      if(snap.exists){
-        var data=snap.data();
-        if(data.image){
-          scannedImages[id]=data.image;
-          dbPut('images',id,data.image);
-        }
-        if(data.pdf){
-          scannedPdfs[id]=data.pdf;
-          dbPut('meta','scannedPdfs',scannedPdfs);
-        }
-        if(data.thumb){
-          pdfThumbnails[id]=data.thumb;
-          dbPut('meta','pdfThumbs',pdfThumbnails);
-        }
-        // ローカルの imgVer を更新して次回の不要な再取得を防ぐ
-        var dObj=DRAWINGS.find(function(x){return String(x.id)===id});
-        if(dObj&&dObj.imgVer){
-          _localImgVer[id]=dObj.imgVer;
-          try{localStorage.setItem('dxp_localImgVer',JSON.stringify(_localImgVer));}catch(e){}
-        }
-        // Firebaseから取得した画像を「同期済み」としてマーク → モバイル側が fbPushAll 時に再アップロードしないようにする
-        if(!window._fbSyncedImages)window._fbSyncedImages={};
-        var fetchedImg=scannedImages[id];
-        var fetchedPdf=scannedPdfs[id];
-        var fetchedThumb=pdfThumbnails[id];
-        var fetchedPdfLen=fetchedPdf&&typeof fetchedPdf==='string'?fetchedPdf.length:0;
-        window._fbSyncedImages[id]=(fetchedImg?fetchedImg.length:0)+'_'+fetchedPdfLen+'_'+(fetchedThumb?fetchedThumb.length:0);
-      }
-    }catch(e){console.warn('Pull failed for',id,':',e.message)}
+  for(var i=0;i<batch.length;i++){
+    await fbPullOneImage(batch[i].id);
     if(i%3===2)await new Promise(function(r){setTimeout(r,50)});
   }
   // Re-render to show newly loaded images
@@ -1520,11 +1535,9 @@ function resetAllData(){
 function mobileForcePull(){
   if(!fbEnabled){alert('Firebase未接続です。インターネット接続を確認してください。');return}
   localStorage.removeItem('dxp_fbCache');
-  // imgVer キャッシュをクリア
+  // imgVer キャッシュをクリア（imgVerが更新されている画像は次の先読みで再取得される）
   _localImgVer={};
   localStorage.removeItem('dxp_localImgVer');
-  // imgVer の有無に関わらず全スキャン済み図面の画像を強制再取得するフラグ
-  window._forcePullImages=true;
   window._fbSnapshotReceived=false;
   window._cacheLoaded=false;
   fbBase=null; // サーバーの内容をそのまま採用し直す
@@ -2547,6 +2560,11 @@ function inject(){setTimeout(function(){
     if(url){
       var cur=el.getAttribute('src')||'';
       if(!cur||cur.length<10)el.src=url;
+    }else if(fbEnabled){
+      // 自動先読み(fbPullMissingImages)が対象外にした画像でも、実際に画面に
+      // 表示された分だけはその場で個別取得する（全件を一度にメモリへ載せない）。
+      var d=DRAWINGS.find(function(x){return x.id===id});
+      if(d&&d.scanned)fbPullOneImage(id).then(function(ok){if(ok)render();});
     }
   });
   document.querySelectorAll('[data-pdf]').forEach(function(el){
