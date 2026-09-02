@@ -1904,8 +1904,9 @@ function normSearch(s){
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}
 function isMobileDevice(){return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)||window.innerWidth<=768}
 function todayLocal(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
-var S={tab:'board',search:'',wbSearch:'',wbSearchInput:'',clientFilter:'',fcat:'すべて',minSim:0,sel:null,results:null,searching:false,detail:null,regOpen:false,regPrev:null,regName:'',regBlobUrl:null,regIsPdf:false,ocrSt:'idle',ocrF:{},invType:'見積書',invDrawing:null,invSearch:'',annoDrawing:null,annoSearch:'',annoPage:1,annoPageCount:0,annoTool:'pen',annoColor:'#C03030',annoStamps:[],annoQRs:[],annoTexts:[],annoLines:[],editOpen:false,editDwg:null,viewerId:null,bulkOpen:false,bulkItems:[],bulkSelected:0,verifyOpen:false,wlDate:todayLocal(),wlRows:null,wlSaved:false,wlShowAll:false};
+var S={tab:'board',search:'',wbSearch:'',wbSearchInput:'',instrSearch:'',instrSearchInput:'',clientFilter:'',fcat:'すべて',minSim:0,sel:null,results:null,searching:false,detail:null,regOpen:false,regPrev:null,regName:'',regBlobUrl:null,regIsPdf:false,ocrSt:'idle',ocrF:{},invType:'見積書',invDrawing:null,invSearch:'',annoDrawing:null,annoSearch:'',annoPage:1,annoPageCount:0,annoTool:'pen',annoColor:'#C03030',annoStamps:[],annoQRs:[],annoTexts:[],annoLines:[],editOpen:false,editDwg:null,viewerId:null,bulkOpen:false,bulkItems:[],bulkSelected:0,verifyOpen:false,wlDate:todayLocal(),wlRows:null,wlSaved:false,wlShowAll:false};
 try{var _bc=localStorage.getItem('dxp_boardCollapsed');if(_bc)S.boardCollapsed=JSON.parse(_bc);}catch(e){}
+try{var _ibc=localStorage.getItem('dxp_instrBoardCollapsed');if(_ibc)S.instrBoardCollapsed=JSON.parse(_ibc);}catch(e){}
 
 // 再描画は #app を作り直すため、入力中だった欄のフォーカスとカーソル位置が失われる。
 // 要素にidが無いので、#app からの子要素インデックスの並び（DOM上の位置）で同じ欄を
@@ -1974,13 +1975,18 @@ function render(){
   if(!window._bootStarted)return; // ログイン前は描画しない（ログイン画面を保護）
   if(!MASTERS.worklogWorkers)MASTERS.worklogWorkers=[];
   if(!MASTERS.worklogMachines)MASTERS.worklogMachines=[];
-  var app=document.getElementById('app'),sts=["待機","検討中","見積済","製造中","完了","納品済"],stC={"待機":"#6B7280","検討中":"#185FA5","見積済":"#B06E15","製造中":"var(--ac)","完了":"#0E7490","納品済":"#1B8C65"},stB={"待機":"#EEF0F2","検討中":"#E6F1FB","見積済":"#FDF3E0","製造中":"#EEEDFE","完了":"#E0F7FA","納品済":"#E8F5EE"},cats=["すべて"].concat(Array.from(new Set(DRAWINGS.map(function(d){return d.cat}))));
-  var fl=DRAWINGS.filter(function(d){if(S.fcat!=='すべて'&&d.cat!==S.fcat)return false;if(S.clientFilter){var cf=S.clientFilter.toLowerCase();if((d.client||'').toLowerCase().indexOf(cf)<0)return false}if(S.search){var q=normSearch(S.search);if(!q)return true;return normSearch(d.name).indexOf(q)>=0||normSearch(d.number).indexOf(q)>=0||normSearch(d.mat).indexOf(q)>=0||normSearch(d.client).indexOf(q)>=0||normSearch(d.size).indexOf(q)>=0||normSearch((d.tags||[]).join(' ')).indexOf(q)>=0}return true});
+  var app=document.getElementById('app');
+  // 加工指示書(docType='instruction')は「案件ホワイトボード」「図面一覧」には出さず、専用タブ(instr)で別枠管理する。
+  // 無指定/'drawing'は従来通りDRAWINGS_MAINに含める(既存データへの影響なし)。
+  var DRAWINGS_MAIN=DRAWINGS.filter(function(d){return d.docType!=='instruction';});
+  var DRAWINGS_INSTR=DRAWINGS.filter(function(d){return d.docType==='instruction';});
+  var cats=["すべて"].concat(Array.from(new Set(DRAWINGS_MAIN.map(function(d){return d.cat}))));
+  var fl=DRAWINGS_MAIN.filter(function(d){if(S.fcat!=='すべて'&&d.cat!==S.fcat)return false;if(S.clientFilter){var cf=S.clientFilter.toLowerCase();if((d.client||'').toLowerCase().indexOf(cf)<0)return false}if(S.search){var q=normSearch(S.search);if(!q)return true;return normSearch(d.name).indexOf(q)>=0||normSearch(d.number).indexOf(q)>=0||normSearch(d.mat).indexOf(q)>=0||normSearch(d.client).indexOf(q)>=0||normSearch(d.size).indexOf(q)>=0||normSearch((d.tags||[]).join(' ')).indexOf(q)>=0}return true});
   var h='<div class="nav"><div class="nav-logo"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg></div><div><div class="nav-title">図面DXプラットフォーム</div><div class="nav-sub">AI図面管理・類似検索</div></div><div class="nav-tabs">';
   var _mobile=isMobileDevice();
   // If mobile and current tab is 'master', switch to 'board'
   if(_mobile&&(S.tab==='master'||S.tab==='analytics'))S.tab='board';
-  var _tabs=_mobile?[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'},{k:'worklog',l:'作業日報'},{k:'delivery',l:'納品カレンダー'}]:[{k:'board',l:'案件ボード'},{k:'list',l:'図面一覧'},{k:'worklog',l:'作業日報'},{k:'delivery',l:'納品カレンダー'},{k:'analytics',l:'生産性分析'},{k:'master',l:'マスター管理'}];
+  var _tabs=_mobile?[{k:'board',l:'案件ボード'},{k:'instr',l:'加工指示書'},{k:'list',l:'図面一覧'},{k:'worklog',l:'作業日報'},{k:'delivery',l:'納品カレンダー'}]:[{k:'board',l:'案件ボード'},{k:'instr',l:'加工指示書'},{k:'list',l:'図面一覧'},{k:'worklog',l:'作業日報'},{k:'delivery',l:'納品カレンダー'},{k:'analytics',l:'生産性分析'},{k:'master',l:'マスター管理'}];
   _tabs.forEach(function(t){h+='<button class="nav-tab'+(S.tab===t.k?' active':'')+'" onclick="setTab(\''+t.k+'\')">'+t.l+'</button>'});
   var _ssc=(function(){var cm={connecting:'#0066CC',pushing:'#0066CC',synced:'#1B8C65',error:'#D70015',offline:'#86868b'};var tm={connecting:'⟳ 接続中...',pushing:'⟳ 同期中...',synced:'✓ 同期済',error:'⚠ 同期エラー'+(_fbErrDetail?' ('+_fbErrDetail+')':''),offline:'○ オフライン'};return{c:cm[fbSyncState]||'#86868b',t:tm[fbSyncState]||'○ オフライン'};})();
   h+='<div id="fbSyncStatus" style="font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;background:var(--bg2);color:'+_ssc.c+';white-space:nowrap;cursor:pointer" title="タップして再取得" onclick="mobileForcePull()">'+_ssc.t+'</div>';
@@ -1996,22 +2002,14 @@ function render(){
   // Storage usage
   try{var imgCount=Object.keys(scannedImages).length;
   h+='<div style="position:absolute;right:20px;top:70px;font-size:9px;color:var(--tx3)">💾 IndexedDB: 図面'+DRAWINGS.length+'件 / 画像'+imgCount+'件</div>'}catch(e){}
-  [{l:'総図面数',v:DRAWINGS.length,u:'件',t:'list'},{l:'進行中',v:DRAWINGS.filter(function(d){return d.status==='製造中'||d.status==='検討中'}).length,u:'件',t:'board'},{l:'納品済',v:DRAWINGS.filter(function(d){return d.status==='納品済'}).length,u:'件',t:'delivery'},{l:'帳票発行',v:INVOICES.length,u:'件',t:(_mobile?null:'invoice')}].forEach(function(k){var click=k.t?' onclick="setTab(\''+k.t+'\')" style="cursor:pointer"':'';h+='<div class="kpi"'+click+'><div class="kpi-label">'+k.l+'</div><div class="kpi-val">'+k.v+'<small> '+k.u+'</small></div></div>'});
+  [{l:'総図面数',v:DRAWINGS_MAIN.length,u:'件',t:'list'},{l:'進行中',v:DRAWINGS_MAIN.filter(function(d){return d.status==='製造中'||d.status==='検討中'}).length,u:'件',t:'board'},{l:'納品済',v:DRAWINGS_MAIN.filter(function(d){return d.status==='納品済'}).length,u:'件',t:'delivery'},{l:'帳票発行',v:INVOICES.length,u:'件',t:(_mobile?null:'invoice')}].forEach(function(k){var click=k.t?' onclick="setTab(\''+k.t+'\')" style="cursor:pointer"':'';h+='<div class="kpi"'+click+'><div class="kpi-label">'+k.l+'</div><div class="kpi-val">'+k.v+'<small> '+k.u+'</small></div></div>'});
   h+='</div>';
 
   // BOARD
-  if(S.tab==='board'){h+='<div class="section-title">案件ホワイトボード</div><div style="margin-bottom:14px;display:flex;gap:8px"><input id="wbSearchInput" type="search" placeholder="図番・品名・材質・サイズ・取引先で絞り込み..." value="'+esc(S.wbSearchInput||'')+'" oninput="S.wbSearchInput=this.value" onkeydown="if(event.key===\'Enter\'){S.wbSearch=S.wbSearchInput;render()}" style="flex:1;padding:9px 14px;border-radius:10px;border:1px solid '+(S.wbSearch?'var(--ac)':'var(--bd)')+';background:var(--bg);color:var(--tx);font-size:13px;outline:none;box-sizing:border-box"><button onclick="S.wbSearch=S.wbSearchInput||S.wbSearch;render()" style="padding:9px 18px;border-radius:10px;border:none;background:var(--ac);color:#fff;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">検索</button>'+(S.wbSearch?'<button onclick="S.wbSearch=\'\';S.wbSearchInput=\'\';render()" style="padding:9px 14px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);font-size:13px;cursor:pointer">✕ クリア</button>':'')+'</div><div class="board">';var _wbq=normSearch(S.wbSearch||'');
-  var _wbHit=null;
-  if(_wbq){
-    _wbHit={};
-    DRAWINGS.forEach(function(d){
-      if(normSearch(d.name).indexOf(_wbq)>=0||normSearch(d.number).indexOf(_wbq)>=0
-        ||normSearch(d.client).indexOf(_wbq)>=0||normSearch(d.mat).indexOf(_wbq)>=0
-        ||normSearch(d.size).indexOf(_wbq)>=0
-        ||normSearch((d.tags||[]).join(' ')).indexOf(_wbq)>=0)_wbHit[d.id]=1;
-    });
-  }
-  sts.forEach(function(st){var items=DRAWINGS.filter(function(d){if(d.status!==st)return false;if(!_wbq)return true;return !!_wbHit[d.id];});var _bcCol=_mobile&&S.boardCollapsed&&S.boardCollapsed[st];var _bcChev=_mobile?'<span style="display:inline-block;width:12px;font-size:9px;color:var(--tx3);transform:rotate('+(_bcCol?'-90deg':'0deg')+')">▼</span>':'';h+='<div class="board-col"><div class="board-col-head"'+(_mobile?' onclick="toggleBoardCol(\''+st+'\')" style="cursor:pointer;user-select:none"':'')+'>'+_bcChev+'<span class="dot" style="background:'+stC[st]+'"></span>'+st+(st==='待機'&&items.length?'<button onclick="event.stopPropagation();openTriage()" style="font-size:10px;padding:2px 10px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer;margin-left:4px">一括整理</button>':'')+'<span class="cnt">'+items.length+'</span></div><div'+(_bcCol?' style="display:none"':'')+'>';items.forEach(function(d){var hasAnno=ANNOTATIONS[d.id]&&((ANNOTATIONS[d.id].lines&&ANNOTATIONS[d.id].lines.length)||(ANNOTATIONS[d.id].stamps&&ANNOTATIONS[d.id].stamps.length)||(ANNOTATIONS[d.id].texts&&ANNOTATIONS[d.id].texts.length)||(ANNOTATIONS[d.id].qrs&&ANNOTATIONS[d.id].qrs.length));h+='<div class="board-card" onclick="openDetail('+d.id+')"><div class="bc-title">'+d.name+(d.scanned?'<span class="badge badge-scan">スキャン</span>':'')+(d.docType==='instruction'?'<span class="badge badge-instr">加工指示書</span>':'')+(hasAnno?'<span class="badge" style="background:#FDF3E0;color:#B06E15;margin-left:4px">✏ 書込</span>':'')+'</div><div class="bc-meta">'+d.number+' · '+d.client+'</div><div class="bc-tags"><span class="bc-tag" style="background:'+stB[st]+';color:'+stC[st]+'">'+st+'</span><span class="bc-tag" style="background:'+(d.priority==='高'?'var(--rd2)':d.priority==='中'?'var(--am2)':'var(--bg3)')+';color:'+(d.priority==='高'?'var(--rd)':d.priority==='中'?'var(--am)':'var(--tx3)')+'">'+d.priority+'</span></div><div style="display:flex;gap:4px;margin-top:6px"><button style="font-size:9px;padding:2px 6px;border-radius:4px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer" onclick="event.stopPropagation();selAnno('+d.id+');S.tab=\'annotate\';render()">書込</button><button style="font-size:9px;padding:2px 6px;border-radius:4px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer" onclick="event.stopPropagation();printDrawingImage('+d.id+')">印刷</button></div></div>'});h+='</div></div>'});h+='</div>'}
+  if(S.tab==='board'){h+='<div class="section-title">案件ホワイトボード</div>'+kanbanBoardHTML(DRAWINGS_MAIN,{searchInputKey:'wbSearchInput',searchKey:'wbSearch',collapsedKey:'boardCollapsed',toggleFn:'toggleBoardCol',showTriage:true});}
+
+  // 加工指示書(図面代用)専用ボード — 通常の図面一覧/案件ボードには出さず、ここで別枠管理する
+  if(S.tab==='instr'){h+='<div class="section-title">加工指示書ボード</div><div style="font-size:12px;color:var(--tx3);margin:-8px 0 14px">得意先から届いた「加工指示書(図面代用)」を、通常の図面と同じ工程で進捗管理します。</div>'+kanbanBoardHTML(DRAWINGS_INSTR,{searchInputKey:'instrSearchInput',searchKey:'instrSearch',collapsedKey:'instrBoardCollapsed',toggleFn:'toggleInstrBoardCol',showTriage:false});}
 
   // 生産性分析
   if(S.tab==='analytics'){h+=analyticsHTML();}
@@ -3285,6 +3283,40 @@ function scatterSVG(rows,target){
   return s;
 }
 function toggleBoardCol(st){if(!S.boardCollapsed)S.boardCollapsed={};S.boardCollapsed[st]=!S.boardCollapsed[st];try{localStorage.setItem('dxp_boardCollapsed',JSON.stringify(S.boardCollapsed));}catch(e){}render();}
+function toggleInstrBoardCol(st){if(!S.instrBoardCollapsed)S.instrBoardCollapsed={};S.instrBoardCollapsed[st]=!S.instrBoardCollapsed[st];try{localStorage.setItem('dxp_instrBoardCollapsed',JSON.stringify(S.instrBoardCollapsed));}catch(e){}render();}
+// 案件ホワイトボード(通常図面)と加工指示書ボードの両方から使う、かんばん形式の共通描画。
+// cfg: {searchInputKey, searchKey, collapsedKey, toggleFn, showTriage}
+function kanbanBoardHTML(items,cfg){
+  var _mobile=isMobileDevice();
+  var sts=["待機","検討中","見積済","製造中","完了","納品済"],stC={"待機":"#6B7280","検討中":"#185FA5","見積済":"#B06E15","製造中":"var(--ac)","完了":"#0E7490","納品済":"#1B8C65"},stB={"待機":"#EEF0F2","検討中":"#E6F1FB","見積済":"#FDF3E0","製造中":"#EEEDFE","完了":"#E0F7FA","納品済":"#E8F5EE"};
+  var searchInputVal=S[cfg.searchInputKey]||'',searchVal=S[cfg.searchKey]||'';
+  var h='<div style="margin-bottom:14px;display:flex;gap:8px"><input id="'+cfg.searchInputKey+'" type="search" placeholder="図番・品名・材質・サイズ・取引先で絞り込み..." value="'+esc(searchInputVal)+'" oninput="S.'+cfg.searchInputKey+'=this.value" onkeydown="if(event.key===\'Enter\'){S.'+cfg.searchKey+'=S.'+cfg.searchInputKey+';render()}" style="flex:1;padding:9px 14px;border-radius:10px;border:1px solid '+(searchVal?'var(--ac)':'var(--bd)')+';background:var(--bg);color:var(--tx);font-size:13px;outline:none;box-sizing:border-box"><button onclick="S.'+cfg.searchKey+'=S.'+cfg.searchInputKey+'||S.'+cfg.searchKey+';render()" style="padding:9px 18px;border-radius:10px;border:none;background:var(--ac);color:#fff;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">検索</button>'+(searchVal?('<button onclick="S.'+cfg.searchKey+'=\'\';S.'+cfg.searchInputKey+'=\'\';render()" style="padding:9px 14px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);font-size:13px;cursor:pointer">✕ クリア</button>'):'')+'</div><div class="board">';
+  var q=normSearch(searchVal);
+  var hit=null;
+  if(q){
+    hit={};
+    items.forEach(function(d){
+      if(normSearch(d.name).indexOf(q)>=0||normSearch(d.number).indexOf(q)>=0
+        ||normSearch(d.client).indexOf(q)>=0||normSearch(d.mat).indexOf(q)>=0
+        ||normSearch(d.size).indexOf(q)>=0
+        ||normSearch((d.tags||[]).join(' ')).indexOf(q)>=0)hit[d.id]=1;
+    });
+  }
+  var collapsed=S[cfg.collapsedKey];
+  sts.forEach(function(st){
+    var colItems=items.filter(function(d){if(d.status!==st)return false;if(!q)return true;return !!hit[d.id];});
+    var bcCol=_mobile&&collapsed&&collapsed[st];
+    var bcChev=_mobile?'<span style="display:inline-block;width:12px;font-size:9px;color:var(--tx3);transform:rotate('+(bcCol?'-90deg':'0deg')+')">▼</span>':'';
+    h+='<div class="board-col"><div class="board-col-head"'+(_mobile?' onclick="'+cfg.toggleFn+'(\''+st+'\')" style="cursor:pointer;user-select:none"':'')+'>'+bcChev+'<span class="dot" style="background:'+stC[st]+'"></span>'+st+(st==='待機'&&colItems.length&&cfg.showTriage?'<button onclick="event.stopPropagation();openTriage()" style="font-size:10px;padding:2px 10px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer;margin-left:4px">一括整理</button>':'')+'<span class="cnt">'+colItems.length+'</span></div><div'+(bcCol?' style="display:none"':'')+'>';
+    colItems.forEach(function(d){
+      var hasAnno=ANNOTATIONS[d.id]&&((ANNOTATIONS[d.id].lines&&ANNOTATIONS[d.id].lines.length)||(ANNOTATIONS[d.id].stamps&&ANNOTATIONS[d.id].stamps.length)||(ANNOTATIONS[d.id].texts&&ANNOTATIONS[d.id].texts.length)||(ANNOTATIONS[d.id].qrs&&ANNOTATIONS[d.id].qrs.length));
+      h+='<div class="board-card" onclick="openDetail('+d.id+')"><div class="bc-title">'+d.name+(d.scanned?'<span class="badge badge-scan">スキャン</span>':'')+(hasAnno?'<span class="badge" style="background:#FDF3E0;color:#B06E15;margin-left:4px">✏ 書込</span>':'')+'</div><div class="bc-meta">'+d.number+' · '+d.client+'</div><div class="bc-tags"><span class="bc-tag" style="background:'+stB[st]+';color:'+stC[st]+'">'+st+'</span><span class="bc-tag" style="background:'+(d.priority==='高'?'var(--rd2)':d.priority==='中'?'var(--am2)':'var(--bg3)')+';color:'+(d.priority==='高'?'var(--rd)':d.priority==='中'?'var(--am)':'var(--tx3)')+'">'+d.priority+'</span></div><div style="display:flex;gap:4px;margin-top:6px"><button style="font-size:9px;padding:2px 6px;border-radius:4px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer" onclick="event.stopPropagation();selAnno('+d.id+');S.tab=\'annotate\';render()">書込</button><button style="font-size:9px;padding:2px 6px;border-radius:4px;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);cursor:pointer" onclick="event.stopPropagation();printDrawingImage('+d.id+')">印刷</button></div></div>';
+    });
+    h+='</div></div>';
+  });
+  h+='</div>';
+  return h;
+}
 function toast(msg){
   var el=document.getElementById('dxpToast');
   if(!el){el=document.createElement('div');el.id='dxpToast';el.className='toast';document.body.appendChild(el);}
@@ -4634,7 +4666,7 @@ function detectNonDrawingDoc(text){
   if(/見積書|御見積|お見積/.test(text))return '見積書';
   return null;
 }
-function saveDwg(){var num=document.getElementById('rN').value.trim(),nm=document.getElementById('rNm').value.trim();if(!num||!nm){alert('図面番号と名称は必須');return}var dupCheck=DRAWINGS.find(function(d){return d.number.toUpperCase()===num.toUpperCase()});if(dupCheck){var ok=confirm('⚠ 重複確認\n\n図面番号「'+num+'」はすでに登録されています。\n\n登録済み：'+dupCheck.name+' / '+dupCheck.client+'\n\nそれでも登録しますか？');if(!ok)return;}var id=nextId++;var cl=document.getElementById('rCl').value.trim()||'未指定';DRAWINGS.unshift({id:id,number:num,name:nm,mat:document.getElementById('rM').value.trim()||'未指定',size:document.getElementById('rSz').value.trim()||'未指定',client:cl,price:parseInt(document.getElementById('rPr').value)||0,date:new Date().toISOString().slice(0,10),tags:(document.getElementById('rTg').value||'').split(/[,、]/).map(function(t){return t.trim()}).filter(Boolean),status:document.getElementById('rSt').value,priority:document.getElementById('rPri').value,docType:document.getElementById('rDocType').value,scanned:!!S.regPrev,isPdf:S.regIsPdf,imgVer:Date.now()});if(S.regPrev){scannedImages[id]=S.regPrev;if(S.regBlobUrl)scannedBlobUrls[id]=S.regBlobUrl;if(S.regIsPdf)scannedPdfs[id]=true}S.regOpen=false;S.tab='list';S.fcat='すべて';S.search='';saveAll();render()}
+function saveDwg(){var num=document.getElementById('rN').value.trim(),nm=document.getElementById('rNm').value.trim();if(!num||!nm){alert('図面番号と名称は必須');return}var dupCheck=DRAWINGS.find(function(d){return d.number.toUpperCase()===num.toUpperCase()});if(dupCheck){var ok=confirm('⚠ 重複確認\n\n図面番号「'+num+'」はすでに登録されています。\n\n登録済み：'+dupCheck.name+' / '+dupCheck.client+'\n\nそれでも登録しますか？');if(!ok)return;}var id=nextId++;var cl=document.getElementById('rCl').value.trim()||'未指定';var rDocType=document.getElementById('rDocType').value;DRAWINGS.unshift({id:id,number:num,name:nm,mat:document.getElementById('rM').value.trim()||'未指定',size:document.getElementById('rSz').value.trim()||'未指定',client:cl,price:parseInt(document.getElementById('rPr').value)||0,date:new Date().toISOString().slice(0,10),tags:(document.getElementById('rTg').value||'').split(/[,、]/).map(function(t){return t.trim()}).filter(Boolean),status:document.getElementById('rSt').value,priority:document.getElementById('rPri').value,docType:rDocType,scanned:!!S.regPrev,isPdf:S.regIsPdf,imgVer:Date.now()});if(S.regPrev){scannedImages[id]=S.regPrev;if(S.regBlobUrl)scannedBlobUrls[id]=S.regBlobUrl;if(S.regIsPdf)scannedPdfs[id]=true}S.regOpen=false;S.tab=rDocType==='instruction'?'instr':'list';S.fcat='すべて';S.search='';saveAll();render()}
 function genInvoice(){
   var s=document.getElementById('invSel');
   var selId=s?s.value:'';
