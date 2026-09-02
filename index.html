@@ -1401,12 +1401,35 @@ function fbStartListener(){
   });
 }
 
+// 【重要・2026-09再発対策】同時実行数(FB_IMG_CONCURRENCY)やバッチ件数(FB_INSP_RDOC_BATCH)を
+// 絞っていても、件数が多い端末では「少しずつ」取得し続けた結果が積み上がり、キャッシュ0件の
+// スマホで累計メモリが際限なく伸びてタブごと落ちる（「同期中→同期済み」を繰り返した末に
+// 「このページを開けません」）事故が再発した。個々の取得は絞れていても“合計”には上限が
+// 無かったのが根本原因。自動先読み(図面画像・検査報告書・関連書類)が実際に取り込んだ
+// データ量(base64文字数)の累計にここで上限を設け、超えたら以後の自動取得を止める。
+// ユーザーが図面や書類を明示的に開いたときの個別取得(openMobileViewer・downloadDrawingFile・
+// 後述のviewInspection/viewRelatedDocのオンデマンド取得)はこの上限の対象外＝常に動く。
+var FB_AUTO_PULL_BYTE_CAP=100*1024*1024; // 約100MB(base64文字数ベース。実メモリはこれより大きくなりうるので余裕を見て低めに設定)
+window._fbAutoPullBytes=window._fbAutoPullBytes||0;
+window._fbAutoPullCapHit=false;
+function _fbAutoPullBudgetOk(){
+  if(window._fbAutoPullBytes<FB_AUTO_PULL_BYTE_CAP)return true;
+  if(!window._fbAutoPullCapHit){
+    window._fbAutoPullCapHit=true;
+    console.warn('自動先読みの累計サイズが上限('+Math.round(FB_AUTO_PULL_BYTE_CAP/1024/1024)+'MB)に達したため自動読み込みを停止しました。以後は図面・書類を開いたときに個別取得します。');
+    try{toast('画像・書類が多いため自動読み込みを一時停止しました。図面を開くと個別に読み込みます。');}catch(e){}
+  }
+  return false;
+}
+function _fbAutoPullAddBytes(n){window._fbAutoPullBytes+=(n||0);}
+
 // 1件分の画像をFirebaseから取得してメモリ(scannedImages等)とIndexedDBへ反映する。
 // fbPullMissingImages（自動の一括先読み）と inject（表示中サムネイルの遅延取得）の両方から使う共通処理。
 window._fbImgFetching=window._fbImgFetching||{}; // 同時に同じidを二重取得しないためのフラグ
 async function fbPullOneImage(id){
   id=String(id);
   if(window._fbImgFetching[id])return false;
+  if(!_fbAutoPullBudgetOk())return false;
   window._fbImgFetching[id]=true;
   try{
     var snap=await fbDB.collection('workspaces').doc('default').collection('images').doc(id).get();
@@ -1437,6 +1460,7 @@ async function fbPullOneImage(id){
     var fetchedThumb=pdfThumbnails[id];
     var fetchedPdfLen=fetchedPdf&&typeof fetchedPdf==='string'?fetchedPdf.length:0;
     window._fbSyncedImages[id]=(fetchedImg?fetchedImg.length:0)+'_'+fetchedPdfLen+'_'+(fetchedThumb?fetchedThumb.length:0);
+    _fbAutoPullAddBytes((fetchedImg?fetchedImg.length:0)+fetchedPdfLen+(fetchedThumb?fetchedThumb.length:0));
     return true;
   }catch(e){console.warn('Pull failed for',id,':',e.message);return false;}
   finally{delete window._fbImgFetching[id];}
@@ -1477,7 +1501,9 @@ function _fbObserveForImage(el){
         window._fbImgObserver.unobserve(entry.target);
         _fbEnqueueImage(entry.target.getAttribute('data-scanimg'));
       });
-    },{rootMargin:'300px'});
+    // スマホは画面が小さくカードが縦に密集しやすいため、300pxのままだと初回スクロール前から
+    // 数十件が「画面に近い」と判定されてキューに積まれてしまう。モバイルではマージンを狭める。
+    },{rootMargin:isMobileDevice()?'120px':'300px'});
   }
   window._fbImgObserver.observe(el);
 }
@@ -1489,6 +1515,7 @@ function _fbObserveForImage(el){
 // 強制終了していた。自動の先読みは直近アクセス順に少数だけへ絞り、残りは inject() 側の
 // 「実際に画面に表示された分だけ」の遅延取得に任せる。
 var FB_IMG_AUTO_PULL_LIMIT=40;
+var FB_IMG_AUTO_PULL_LIMIT_MOBILE=15; // スマホは画面もメモリも小さいため起動時の自動先読みを絞る
 async function fbPullMissingImages(){
   if(!fbEnabled||!DRAWINGS)return;
   var missing=[];
@@ -1503,7 +1530,7 @@ async function fbPullMissingImages(){
   if(missing.length===0)return;
   // 直近に触った図面ほど見られる可能性が高いので優先。それ以外は表示された時に個別取得する。
   missing.sort(function(a,b){return(b.lastAccess||b.date||'')<(a.lastAccess||a.date||'')?-1:1;});
-  var batch=missing.slice(0,FB_IMG_AUTO_PULL_LIMIT);
+  var batch=missing.slice(0,isMobileDevice()?FB_IMG_AUTO_PULL_LIMIT_MOBILE:FB_IMG_AUTO_PULL_LIMIT);
 
   for(var i=0;i<batch.length;i++){
     await fbPullOneImage(batch[i].id);
@@ -4846,6 +4873,7 @@ function compressImage(dataUrl,cb,targetBytes){
 var FB_INSP_RDOC_BATCH=20;
 function fbLoadInspectionFiles(){
   if(!fbEnabled)return;
+  if(!_fbAutoPullBudgetOk())return; // 累計サイズ上限(FB_AUTO_PULL_BYTE_CAP)に達していたら自動取得は行わない。個別のvia viewInspectionは対象外
   var toFetch=[],toBackup=[];
   Object.keys(inspectionReports).forEach(function(drawingId){
     (inspectionReports[drawingId]||[]).forEach(function(r){
@@ -4858,6 +4886,7 @@ function fbLoadInspectionFiles(){
     fbDB.collection('workspaces').doc('insp_'+r.fileId).get().then(function(doc){
       if(doc.exists){
         r.data=doc.data().data;
+        _fbAutoPullAddBytes(r.data?r.data.length:0);
         dbPut('meta','inspections',inspectionReports);
         render();
       }
@@ -4974,21 +5003,37 @@ function uploadInspection(drawingId){
   input.click();
 }
 
+// 表示用HTMLの共通生成(viewInspection/viewRelatedDoc兼用)
+function _docViewerHtml(safeName,type,src){
+  if(type==='application/pdf'){
+    return '\x3Chtml\x3E\x3Chead\x3E\x3Ctitle\x3E'+safeName+'\x3C/title\x3E\x3C/head\x3E\x3Cbody style="margin:0"\x3E\x3Cembed src="'+src+'" type="application/pdf" width="100%" height="100%" style="height:100vh"\x3E\x3C/body\x3E\x3C/html\x3E';
+  }
+  return '\x3Chtml\x3E\x3Chead\x3E\x3Ctitle\x3E'+safeName+'\x3C/title\x3E\x3C/head\x3E\x3Cbody style="margin:0;background:#333;display:flex;align-items:center;justify-content:center;min-height:100vh"\x3E\x3Cimg src="'+src+'" style="max-width:100%;max-height:100vh"\x3E\x3C/body\x3E\x3C/html\x3E';
+}
+// 自動先読み(fbLoadInspectionFiles/fbLoadRelatedDocFiles)は累計サイズ上限に達すると
+// 未取得のまま止まることがある。「表示」を明示的にタップされたときは、その1件だけを
+// 上限を無視して個別取得する(ユーザーが今まさに見たいものなので、自動先読みとは別枠で許可する)。
+function _fetchDocDataOnDemand(prefix,fileId){
+  if(!fbEnabled||!fileId)return Promise.resolve(null);
+  return fbDB.collection('workspaces').doc(prefix+fileId).get().then(function(doc){
+    return doc.exists?(doc.data().data||null):null;
+  }).catch(function(){return null;});
+}
 function viewInspection(drawingId,idx){
   var r=inspectionReports[drawingId]&&inspectionReports[drawingId][idx];
   if(!r)return;
-  var w=window.open('','_blank');
   var safeName=(r.name||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  var html;
   var src=r.url||r.data||'';
-  if(!src){alert('ファイルデータが見つかりません。\n一度削除してから再度アップロードしてください。');return;}
-  if(r.type==='application/pdf'){
-    html='\x3Chtml\x3E\x3Chead\x3E\x3Ctitle\x3E'+safeName+'\x3C/title\x3E\x3C/head\x3E\x3Cbody style="margin:0"\x3E\x3Cembed src="'+src+'" type="application/pdf" width="100%" height="100%" style="height:100vh"\x3E\x3C/body\x3E\x3C/html\x3E';
-  }else{
-    html='\x3Chtml\x3E\x3Chead\x3E\x3Ctitle\x3E'+safeName+'\x3C/title\x3E\x3C/head\x3E\x3Cbody style="margin:0;background:#333;display:flex;align-items:center;justify-content:center;min-height:100vh"\x3E\x3Cimg src="'+src+'" style="max-width:100%;max-height:100vh"\x3E\x3C/body\x3E\x3C/html\x3E';
-  }
-  w.document.write(html);
+  var w=window.open('','_blank');
+  if(src){w.document.write(_docViewerHtml(safeName,r.type,src));w.document.close();return;}
+  w.document.write('\x3Chtml\x3E\x3Cbody style="margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:sans-serif;color:#666"\x3E読み込み中...\x3C/body\x3E\x3C/html\x3E');
   w.document.close();
+  _fetchDocDataOnDemand('insp_',r.fileId).then(function(data){
+    if(!data){w.close();alert('ファイルデータが見つかりません。\n一度削除してから再度アップロードしてください。');return;}
+    r.data=data;
+    dbPut('meta','inspections',inspectionReports);
+    w.document.open();w.document.write(_docViewerHtml(safeName,r.type,data));w.document.close();
+  });
 }
 
 function delInspection(drawingId,idx){
@@ -5003,6 +5048,7 @@ function delInspection(drawingId,idx){
 
 function fbLoadRelatedDocFiles(){
   if(!fbEnabled)return;
+  if(!_fbAutoPullBudgetOk())return; // 累計サイズ上限(FB_AUTO_PULL_BYTE_CAP)に達していたら自動取得は行わない。個別のviewRelatedDocは対象外
   var toFetch=[],toBackup=[];
   Object.keys(relatedDocuments).forEach(function(drawingId){
     (relatedDocuments[drawingId]||[]).forEach(function(r){
@@ -5014,6 +5060,7 @@ function fbLoadRelatedDocFiles(){
     fbDB.collection('workspaces').doc('rdoc_'+r.fileId).get().then(function(doc){
       if(doc.exists){
         r.data=doc.data().data;
+        _fbAutoPullAddBytes(r.data?r.data.length:0);
         dbPut('meta','relatedDocuments',relatedDocuments);
         render();
       }
@@ -5043,17 +5090,18 @@ function uploadRelatedDoc(drawingId){
 function viewRelatedDoc(drawingId,idx){
   var r=relatedDocuments[drawingId]&&relatedDocuments[drawingId][idx];
   if(!r)return;
-  var w=window.open('','_blank');
   var safeName=(r.name||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   var src=r.url||r.data||'';
-  if(!src){alert('ファイルデータが見つかりません。\n一度削除してから再度アップロードしてください。');return;}
-  var html;
-  if(r.type==='application/pdf'){
-    html='\x3Chtml\x3E\x3Chead\x3E\x3Ctitle\x3E'+safeName+'\x3C/title\x3E\x3C/head\x3E\x3Cbody style="margin:0"\x3E\x3Cembed src="'+src+'" type="application/pdf" width="100%" height="100%" style="height:100vh"\x3E\x3C/body\x3E\x3C/html\x3E';
-  }else{
-    html='\x3Chtml\x3E\x3Chead\x3E\x3Ctitle\x3E'+safeName+'\x3C/title\x3E\x3C/head\x3E\x3Cbody style="margin:0;background:#333;display:flex;align-items:center;justify-content:center;min-height:100vh"\x3E\x3Cimg src="'+src+'" style="max-width:100%;max-height:100vh"\x3E\x3C/body\x3E\x3C/html\x3E';
-  }
-  w.document.write(html);w.document.close();
+  var w=window.open('','_blank');
+  if(src){w.document.write(_docViewerHtml(safeName,r.type,src));w.document.close();return;}
+  w.document.write('\x3Chtml\x3E\x3Cbody style="margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:sans-serif;color:#666"\x3E読み込み中...\x3C/body\x3E\x3C/html\x3E');
+  w.document.close();
+  _fetchDocDataOnDemand('rdoc_',r.fileId).then(function(data){
+    if(!data){w.close();alert('ファイルデータが見つかりません。\n一度削除してから再度アップロードしてください。');return;}
+    r.data=data;
+    dbPut('meta','relatedDocuments',relatedDocuments);
+    w.document.open();w.document.write(_docViewerHtml(safeName,r.type,data));w.document.close();
+  });
 }
 function delRelatedDoc(drawingId,idx){
   if(!confirm('この関連書類を削除しますか？'))return;
