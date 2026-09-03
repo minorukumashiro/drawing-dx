@@ -1244,7 +1244,7 @@ function fbStartListener(){
       // 書き込み、自分の変更のエコーが届くたびに #app を作り直していたため画面がチカチカしていた。
       // 同期バッジ(updateSyncStatus)と死活監視バナー(checkWatcherHealth)はDOMを直接触るので、
       // ここを飛ばしても表示は更新される。
-      if(_fbLocalSig()!==_preSig)render();
+      if(_fbLocalSig()!==_preSig)deferredRender();
       fbLoadInspectionFiles();
       fbLoadRelatedDocFiles();
       fbPullMissingImages();
@@ -1389,7 +1389,7 @@ function fbStartListener(){
       }));
     }catch(e){/* localStorage may be full */}
     updateSyncStatus('synced');
-    render();
+    deferredRender();
     // Pull missing images from Firebase (background)
     fbPullMissingImages();
   },function(err){
@@ -1495,7 +1495,7 @@ function _fbDrainImageQueue(){
     window._fbImgActive++;
     fbPullOneImage(id).then(function(ok){
       window._fbImgActive--;
-      if(ok)render();
+      if(ok)deferredRender();
       _fbDrainImageQueue();
     });
   }
@@ -1546,7 +1546,7 @@ async function fbPullMissingImages(){
     if(i%3===2)await new Promise(function(r){setTimeout(r,50)});
   }
   // Re-render to show newly loaded images
-  render();
+  deferredRender();
 }
 
 function fbClientId(){
@@ -1978,6 +1978,33 @@ function _formRestore(root,list){
       }
     }catch(e){}
   }
+}
+// 【重要・2026-09】render()は#appのinnerHTMLを毎回丸ごと作り直すため、入力欄にフォーカスが
+// あるときにバックグラウンド要因(他端末の変更受信・自動取込・画像/書類の遅延読み込み完了等)で
+// render()が呼ばれると、入力中の要素ごとDOMが作り直されてフォーカス(とスマホのキーボード)が
+// 消える。作業日報のようなフォーム入力中にこれが起きると、ユーザーからは「入力中に勝手に
+// 別の画面に切り替わった」ように見える(実際はS.tabは変わっていないが、キーボードが閉じて
+// 画面が大きくジャンプするため)。ユーザー自身の操作(クリック・onchange等)による直接のrender()
+// 呼び出しはそのままでよいが、上記のようなバックグラウンド起因のrender()は
+// deferredRender()を代わりに使い、入力中は再描画を待たせる。
+function _isEditingFormField(){
+  var el=document.activeElement;
+  if(!el)return false;
+  var tag=el.tagName;
+  if(tag!=='INPUT'&&tag!=='TEXTAREA')return false;
+  if(el.type==='date'||el.type==='checkbox'||el.type==='radio')return false;
+  var appEl=document.getElementById('app');
+  return !!(appEl&&appEl.contains(el));
+}
+window._deferredRenderTimer=null;
+function deferredRender(){
+  if(_isEditingFormField()){
+    clearTimeout(window._deferredRenderTimer);
+    window._deferredRenderTimer=setTimeout(deferredRender,3000);
+    return;
+  }
+  window._deferredRenderTimer=null;
+  render();
 }
 function render(){
   if(!window._bootStarted)return; // ログイン前は描画しない（ログイン画面を保護）
@@ -4935,7 +4962,7 @@ function fbLoadInspectionFiles(){
         r.data=doc.data().data;
         _fbAutoPullAddBytes(r.data?r.data.length:0);
         dbPut('meta','inspections',inspectionReports);
-        render();
+        deferredRender();
       }
     }).catch(function(e){console.warn('insp load failed:',e.message);});
   });
@@ -5109,7 +5136,7 @@ function fbLoadRelatedDocFiles(){
         r.data=doc.data().data;
         _fbAutoPullAddBytes(r.data?r.data.length:0);
         dbPut('meta','relatedDocuments',relatedDocuments);
-        render();
+        deferredRender();
       }
     }).catch(function(e){console.warn('rdoc load failed:',e.message);});
   });
