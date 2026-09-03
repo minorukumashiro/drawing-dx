@@ -557,9 +557,18 @@ function saveAll(skipImages){
   dbPut('meta','annotations',ANNOTATIONS);
   dbPut('meta','worklogs',WORKLOGS);
   dbPut('meta','trash',TRASH);
-  // Save images individually
+  // Save images individually — ただし前回保存時から内容が変わっていない画像は書き込まない。
+  // 【重要・2026-09再発】このループは以前、scannedImagesの全件を毎回無条件でIndexedDBへ
+  // 書き直していた。OOM対策で自動先読みの累計上限を設けた結果、スマホでもscannedImagesに
+  // 数十件(数十〜100MB相当)がキャッシュされる状態が普通になり、作業日報で名前/機械番号を
+  // 選ぶだけの操作(saveAll呼び出し)のたびに、変化していない画像まで含めて数十件ぶんの
+  // IndexedDBトランザクションが毎回走ることになり、スマホで画面が固まる／落ちる原因になった。
+  // 文字列は値で比較できるので、前回書き込んだ値と同じなら再書き込みをスキップする。
+  window._imgLastPersisted=window._imgLastPersisted||{};
   Object.keys(scannedImages).forEach(function(id){
+    if(window._imgLastPersisted[id]===scannedImages[id])return;
     dbPut('images',String(id),scannedImages[id]);
+    window._imgLastPersisted[id]=scannedImages[id];
   });
   // Firebase sync (debounced)
   if(fbEnabled){
