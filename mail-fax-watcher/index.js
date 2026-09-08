@@ -262,7 +262,30 @@ async function main() {
   for (const item of allItems) {
     if (!allowed.has(item.ext)) continue;
     const key = dedupKey(item);
-    if (st.processed[key]) continue; // 処理済み
+    const existing = st.processed[key];
+    if (existing) {
+      // 【重要・2026-09発覚】メールの重複判定キーは「元のファイル名+サイズ」のみ(タイムスタンプを
+      // 含まない、2026-08-15の重複登録修正でそうした)。そのため同じ署名画像(icloud.jpg等)が
+      // 毎回同じ内容で届くと、1件目は「仕事に不要な画像」として skipped へ退避されるが、
+      // 2件目以降は退避前にここで弾かれてしまい、mail-inbox 直下に永久に残り続けていた
+      // (FAXはファイル名に送信元+タイムスタンプが必ず入るためこの衝突が起きず、無縁だった)。
+      // 取込み判定(重複登録しない)自体は変えず、まだ退避されていない残骸だけこの機会に片付ける。
+      // 同様に、登録自体は成功したがprocessed/への移動だけがEBUSY等で失敗した場合も
+      // (実例: 2026-08-04 "resource busy or locked"。移動失敗はログに残すだけで処理継続する
+      // 設計のため、以後ずっと同じ残骸が再スキャンされ続けていた)、ここでまとめて片付ける。
+      if (item.source === 'mail' && fs.existsSync(item.filePath)) {
+        if (existing.skippedNonWork) {
+          const skDir = path.join(cfg.sources.mailInboxFolder, SKIPPED_DIR_NAME);
+          ensureDir(skDir);
+          try { fs.renameSync(item.filePath, path.join(skDir, item.fileName)); } catch (e) { /* 次回また試みるだけなので無視 */ }
+        } else if (existing.drawingId) {
+          const procDir = path.join(cfg.sources.mailInboxFolder, PROCESSED_DIR_NAME);
+          ensureDir(procDir);
+          try { fs.renameSync(item.filePath, path.join(procDir, item.fileName)); } catch (e) { /* 次回また試みるだけなので無視 */ }
+        }
+      }
+      continue; // 処理済み
+    }
     if (cfg.excludeNonDrawingDocsByFilename) {
       const kind = detectNonDrawingDoc(item.fileName);
       if (kind) {
