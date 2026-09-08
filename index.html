@@ -255,6 +255,13 @@ async function doAutoSave(){
     var perm=await _autoSaveHandle.queryPermission({mode:'readwrite'});
     if(perm==='prompt')perm=await _autoSaveHandle.requestPermission({mode:'readwrite'});
     if(perm!=='granted'){_autoSaveHandle=null;dbDel('meta','_autoSaveHandle');render();return}
+    // 起動時は画像を遅延読み込みするため(loadData参照)、自動保存バックアップを完全なものに
+    // するにはメモリに乗っていない画像が要る。セッション中1回だけ全件読み込んでおけば、以降は
+    // 新規追加分でscannedImagesが自然に更新され続けるため、毎回この読み込みをする必要はない。
+    if(!window._autoSaveImagesLoaded){
+      window._autoSaveImagesLoaded=true;
+      await new Promise(function(res){loadAllLocalImagesIntoMemory(res);});
+    }
     var data={version:2,date:new Date().toISOString(),drawings:DRAWINGS,invoices:INVOICES,masters:MASTERS,nextId:nextId,scannedPdfs:scannedPdfs,pdfThumbnails:pdfThumbnails,scannedImages:scannedImages};
     var writable=await _autoSaveHandle.createWritable();
     await writable.write(JSON.stringify(data));
@@ -427,23 +434,24 @@ if(reqs.annotations.result)ANNOTATIONS=reqs.annotations.result;
         render();
         checkUrlAndOpen();
         startFbAfterLoad();
-        // Load images from IndexedDB IN BACKGROUND
+        // 【重要・2026-09】以前はここで画像を(getAll()で)全件まとめてメモリへ読み込んでいた。
+        // 長く使っている端末ほどIndexedDBに溜まった画像が数百MB規模になり、起動のたびにこれを
+        // 丸ごと読み直すのが「スマホでの読み込みが遅い」の主因だった(件数・サイズに上限が無い点は
+        // Firestoreからの先読みで対処済みだった問題と同じで、ローカルの再読み込み側には対処が
+        // 漏れていた)。実際の画像データは読まず、キー一覧(getAllKeys、軽い)だけを先に取得して
+        // 「どの図面の画像がローカルに既にあるか」を把握するにとどめ、実データは各画面で
+        // 実際に表示される時(inject()のIntersectionObserver経由)に1件ずつ読む。
         var imgTx=db.transaction('images','readonly');
         var imgStore=imgTx.objectStore('images');
-        var imgReq=imgStore.getAll();
         var keyReq=imgStore.getAllKeys();
         imgTx.oncomplete=function(){
-          scannedImages={};
-          if(keyReq.result&&imgReq.result){
-            keyReq.result.forEach(function(k,i){
-              scannedImages[k]=imgReq.result[i];
-            });
-          }
-          // Migrate from localStorage if IndexedDB images empty
-          if(Object.keys(scannedImages).length===0){
+          window._localImageKeys={};
+          (keyReq.result||[]).forEach(function(k){window._localImageKeys[String(k)]=true;});
+          // IndexedDBに画像が1件も無い(ごく古いlocalStorageのみのデータ)場合だけ移行する
+          if((keyReq.result||[]).length===0){
             migrateFromLocalStorage();
+            render();
           }
-          render(); // Re-render with images now loaded
         };
       };
     }else{
@@ -454,6 +462,25 @@ if(reqs.annotations.result)ANNOTATIONS=reqs.annotations.result;
       checkUrlAndOpen();
       startFbAfterLoad();
     }
+  });
+}
+
+// 通常の起動・同期は画像を遅延読み込みするが(loadData参照)、バックアップ書き出しや
+// 強制再送信のような「今ある全データが対象」の操作では、メモリにまだ乗っていない画像も
+// IndexedDBから明示的に読み込んでおく必要がある。ユーザーが明示的に押す稀な操作の
+// ときだけ使う(自動・毎回の処理では使わない)。
+function loadAllLocalImagesIntoMemory(cb){
+  openDB(function(db){
+    if(!db){cb();return}
+    var tx=db.transaction('images','readonly');
+    var store=tx.objectStore('images');
+    var keyReq=store.getAllKeys();
+    var valReq=store.getAll();
+    tx.oncomplete=function(){
+      var keys=keyReq.result||[],vals=valReq.result||[];
+      keys.forEach(function(k,i){if(vals[i]!=null)scannedImages[k]=vals[i];});
+      cb();
+    };
   });
 }
 
@@ -1441,12 +1468,34 @@ async function fbPullOneImage(id){
   if(!_fbAutoPullBudgetOk())return false;
   window._fbImgFetching[id]=true;
   try{
+    // ローカルのIndexedDBに既にある画像はネットワークを使わずそちらから読む方が速く、
+    // Firestoreへの不要なアクセス(自動先読みの累計上限も消費してしまう)も避けられる。
+    // ただし他端末が画像を差し替えていてimgVerが進んでいる(=ローカルが古い)場合は
+    // ローカルを信用せずFirestoreから取り直す。
+    // 【重要】_localImgVerは「過去にFirestoreへ問い合わせて確認できたimgVer」だけを記録する
+    // ものなので、この端末で最初から登録された(一度もFirestoreへ取りに行ったことが無い)画像は
+    // 通常ここが未設定のまま。「未確認=古いかもしれない」と扱うと、自分で登録した画像まで
+    // 毎回Firestoreへ問い合わせに行ってしまい、ローカル優先の意味が無くなる。
+    // そのため「確認済みの版より新しいimgVerがある」場合だけを古いと判定し、未確認(undefined)の
+    // 場合はローカルを信用する。
+    var dForVer=DRAWINGS.find(function(x){return String(x.id)===id});
+    var localMaybeStale=dForVer&&dForVer.imgVer&&_localImgVer[id]&&(dForVer.imgVer>_localImgVer[id]);
+    if(window._localImageKeys&&window._localImageKeys[id]&&!localMaybeStale){
+      var localImg=await new Promise(function(res){dbGet('images',id,res);});
+      if(localImg){
+        scannedImages[id]=localImg;
+        _fbAutoPullAddBytes(localImg.length||0);
+        return true;
+      }
+    }
+    if(!fbEnabled)return false;
     var snap=await fbDB.collection('workspaces').doc('default').collection('images').doc(id).get();
     if(!snap.exists)return false;
     var data=snap.data();
     if(data.image){
       scannedImages[id]=data.image;
       dbPut('images',id,data.image);
+      if(window._localImageKeys)window._localImageKeys[id]=true;
     }
     if(data.pdf){
       scannedPdfs[id]=data.pdf;
@@ -1457,9 +1506,8 @@ async function fbPullOneImage(id){
       dbPut('meta','pdfThumbs',pdfThumbnails);
     }
     // ローカルの imgVer を更新して次回の不要な再取得を防ぐ
-    var dObj=DRAWINGS.find(function(x){return String(x.id)===id});
-    if(dObj&&dObj.imgVer){
-      _localImgVer[id]=dObj.imgVer;
+    if(dForVer&&dForVer.imgVer){
+      _localImgVer[id]=dForVer.imgVer;
       try{localStorage.setItem('dxp_localImgVer',JSON.stringify(_localImgVer));}catch(e){}
     }
     // Firebaseから取得した画像を「同期済み」としてマーク → モバイル側が fbPushAll 時に再アップロードしないようにする
@@ -1530,8 +1578,14 @@ async function fbPullMissingImages(){
   var missing=[];
   DRAWINGS.forEach(function(d){
     var id=d.id;
-    var localHasImage=scannedImages[id]||scannedPdfs[id];
-    var imgVerStale=d.imgVer&&(d.imgVer>(_localImgVer[String(id)]||0));
+    // ローカル(IndexedDB)に既にある画像は、ここでの先読み対象にしない。実際に表示される時に
+    // inject()経由でローカルから即座に読めるため、起動時にわざわざFirestoreへ取りに行く必要が無い。
+    var localHasImage=scannedImages[id]||scannedPdfs[id]||(window._localImageKeys&&window._localImageKeys[String(id)]);
+    // 【重要】_localImgVerは「過去にFirestoreへ確認して分かっているimgVer」だけを記録するため、
+    // この端末で登録して一度もFirestore確認していない画像は未設定のまま。以前は||0でフォールバック
+    // していたため、そういう画像も常に「古いかもしれない」扱いになり、ローカルにあるのに毎回
+    // 先読み対象に入ってしまっていた。確認済みの版より新しいと分かっている場合だけを古いとみなす。
+    var imgVerStale=d.imgVer&&_localImgVer[String(id)]&&(d.imgVer>_localImgVer[String(id)]);
     if(d.scanned&&(!localHasImage||imgVerStale)){
       missing.push(d);
     }
@@ -1633,6 +1687,9 @@ async function forcePushToFirebase(){
     window._fbSyncedImages={};// 全画像を強制再アップロード
     saveSyncedImageIndex();
     window._fbSnapshotReceived=true;
+    // 起動時は画像を遅延読み込みするため、メモリに乗っていない画像はここで明示的に
+    // IndexedDBから読み込んでおかないと「全データ送信」のはずが一部しか送られない。
+    await new Promise(function(res){loadAllLocalImagesIntoMemory(res);});
     await fbPushImages();
     fbLastLocalChange=Date.now();
     pushMeta();
@@ -1661,33 +1718,37 @@ function forceRestoreFromFirebase(){
 }
 
 function exportAllData(){
-  var data={
-    version:2,
-    date:new Date().toISOString(),
-    drawings:DRAWINGS,
-    invoices:INVOICES,
-    masters:MASTERS,
-    worklogs:WORKLOGS,
-    deliveries:DELIVERIES,
-    nextId:nextId,
-    scannedImages:{},
-    scannedPdfs:scannedPdfs,
-    pdfThumbnails:pdfThumbnails
-  };
-  Object.keys(scannedImages).forEach(function(id){
-    data.scannedImages[id]=scannedImages[id];
+  // 起動時の自動読み込みは軽量化のためscannedImagesを全件読み込まなくなったので、
+  // バックアップを完全なものにするため、表示されずメモリに乗っていない分もここで読み込む。
+  loadAllLocalImagesIntoMemory(function(){
+    var data={
+      version:2,
+      date:new Date().toISOString(),
+      drawings:DRAWINGS,
+      invoices:INVOICES,
+      masters:MASTERS,
+      worklogs:WORKLOGS,
+      deliveries:DELIVERIES,
+      nextId:nextId,
+      scannedImages:{},
+      scannedPdfs:scannedPdfs,
+      pdfThumbnails:pdfThumbnails
+    };
+    Object.keys(scannedImages).forEach(function(id){
+      data.scannedImages[id]=scannedImages[id];
+    });
+    var json=JSON.stringify(data);
+    var blob=new Blob([json],{type:'application/json'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    a.href=url;
+    a.download='dxp_backup_'+new Date().toISOString().slice(0,10)+'.json';
+    document.body.appendChild(a);a.click();
+    setTimeout(function(){document.body.removeChild(a);URL.revokeObjectURL(url)},100);
+    var imgCount=Object.keys(data.scannedImages).length;
+    var sizeMB=(json.length/1024/1024).toFixed(1);
+    alert('エクスポート完了！\n図面: '+DRAWINGS.length+'件 / 画像: '+imgCount+'件 / '+sizeMB+'MB\n\nダウンロードフォルダに保存されました。\n「Alritへバックアップ」ボタンでAlrit共有フォルダにもコピーできます。');
   });
-  var json=JSON.stringify(data);
-  var blob=new Blob([json],{type:'application/json'});
-  var url=URL.createObjectURL(blob);
-  var a=document.createElement('a');
-  a.href=url;
-  a.download='dxp_backup_'+new Date().toISOString().slice(0,10)+'.json';
-  document.body.appendChild(a);a.click();
-  setTimeout(function(){document.body.removeChild(a);URL.revokeObjectURL(url)},100);
-  var imgCount=Object.keys(data.scannedImages).length;
-  var sizeMB=(json.length/1024/1024).toFixed(1);
-  alert('エクスポート完了！\n図面: '+DRAWINGS.length+'件 / 画像: '+imgCount+'件 / '+sizeMB+'MB\n\nダウンロードフォルダに保存されました。\n「Alritへバックアップ」ボタンでAlrit共有フォルダにもコピーできます。');
 }
 
 function importAllData(event){
@@ -1708,13 +1769,15 @@ function importAllData(event){
       scannedPdfs=data.scannedPdfs||{};
       pdfThumbnails=data.pdfThumbnails||{};
       scannedImages={};
-      
+      window._localImageKeys={};
+
       if(data.scannedImages){
         Object.keys(data.scannedImages).forEach(function(id){
           scannedImages[id]=data.scannedImages[id];
+          window._localImageKeys[id]=true;
         });
       }
-      
+
       saveAll();
       render();
       // インポート直後にFirebaseへ強制送信
@@ -2028,8 +2091,8 @@ function render(){
     h+='<button class="nav-tab" style="background:#555;color:#fff;font-weight:600" onclick="S.verifyOpen=true;render()">🔍 図面確認</button>';
   }
   h+='</div></div><div class="kpi-row">';
-  // Storage usage
-  try{var imgCount=Object.keys(scannedImages).length;
+  // Storage usage — 画像は遅延読み込みなので、メモリ上ではなくローカルにある件数(_localImageKeys)を表示する
+  try{var imgCount=window._localImageKeys?Object.keys(window._localImageKeys).length:Object.keys(scannedImages).length;
   h+='<div style="position:absolute;right:20px;top:70px;font-size:9px;color:var(--tx3)">💾 IndexedDB: 図面'+DRAWINGS.length+'件 / 画像'+imgCount+'件</div>'}catch(e){}
   [{l:'総図面数',v:DRAWINGS.length,u:'件',t:'list'},{l:'進行中',v:DRAWINGS.filter(function(d){return d.status==='製造中'||d.status==='検討中'}).length,u:'件',t:'board'},{l:'納品済',v:DRAWINGS.filter(function(d){return d.status==='納品済'}).length,u:'件',t:'delivery'},{l:'帳票発行',v:INVOICES.length,u:'件',t:(_mobile?null:'invoice')}].forEach(function(k){var click=k.t?' onclick="setTab(\''+k.t+'\')" style="cursor:pointer"':'';h+='<div class="kpi"'+click+'><div class="kpi-label">'+k.l+'</div><div class="kpi-val">'+k.v+'<small> '+k.u+'</small></div></div>'});
   h+='</div>';
@@ -2664,12 +2727,14 @@ function inject(){setTimeout(function(){
     if(url){
       var cur=el.getAttribute('src')||'';
       if(!cur||cur.length<10)el.src=url;
-    }else if(fbEnabled){
+    }else{
       // 【重要】2026-09 修正時のバグ: 図面一覧は仮想スクロールをしておらず、
       // フィルタ無しだと743件ぶんの[data-scanimg]が一度にDOMへ生成される。
       // ここで querySelectorAll した全要素へ即fetchをかけると「画面に表示された
       // 分だけ」のつもりが実質また全件同時取得になり、先読み制限の意味が無かった。
       // IntersectionObserverで実際に画面内(またはその近く)に来た要素だけを対象にする。
+      // fbEnabledに関わらず観察対象にする — ローカルのIndexedDBに既に画像がある場合は
+      // Firebase未接続でもfbPullOneImage側でローカル読み込みだけ行われるため。
       var d=DRAWINGS.find(function(x){return x.id===id});
       if(d&&d.scanned)_fbObserveForImage(el);
     }
