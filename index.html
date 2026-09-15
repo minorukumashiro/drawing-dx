@@ -1484,6 +1484,17 @@ function _fbAutoPullAddBytes(n){window._fbAutoPullBytes+=(n||0);}
 // 1件分の画像をFirebaseから取得してメモリ(scannedImages等)とIndexedDBへ反映する。
 // fbPullMissingImages（自動の一括先読み）と inject（表示中サムネイルの遅延取得）の両方から使う共通処理。
 window._fbImgFetching=window._fbImgFetching||{}; // 同時に同じidを二重取得しないためのフラグ
+// 「ローカルにもクラウドにも画像が無い」と実際に確認できたidの印。
+// thumb() はこの印がある時だけ「画像なし」を表示する（未取得と不在を区別するため）。
+window._imgKnownMissing=window._imgKnownMissing||{};
+function _markImgMissing(id){
+  id=String(id);
+  if(window._imgKnownMissing[id])return;
+  window._imgKnownMissing[id]=true;
+  // 1件ごとに再描画すると一覧で連発するのでまとめて1回にする
+  clearTimeout(window._imgMissingRenderTimer);
+  window._imgMissingRenderTimer=setTimeout(function(){deferredRender();},400);
+}
 // force=true はユーザーが図面を明示的に開いた時の取得。自動先読みの累計上限
 // (FB_AUTO_PULL_BYTE_CAP)の対象外にして、上限に達した後でも必ず取得できるようにする。
 async function fbPullOneImage(id,force){
@@ -1512,10 +1523,11 @@ async function fbPullOneImage(id,force){
         return true;
       }
     }
-    if(!fbEnabled)return false;
+    if(!fbEnabled){_markImgMissing(id);return false;}
     var snap=await fbDB.collection('workspaces').doc('default').collection('images').doc(id).get();
-    if(!snap.exists)return false;
+    if(!snap.exists){_markImgMissing(id);return false;}
     var data=snap.data();
+    if(!data||(!data.image&&!data.pdf&&!data.thumb)){_markImgMissing(id);return false;}
     if(data.image){
       scannedImages[id]=data.image;
       dbPut('images',id,data.image);
@@ -1976,10 +1988,24 @@ function thumb(d,sz){
   if(typeof scannedPdfs[d.id]==='string'){
     return '<div data-pdfrender="'+d.id+'" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:'+(sz||56)+'px"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#C03030" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span style="font-size:9px;color:#C03030">読込中...</span></div>';
   }
-  if(d.scanned) return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:'+(sz||56)+'px;color:var(--rd);font-size:10px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>画像なし</div>';
+  if(d.scanned){
+    // 【重要】画像は遅延読み込み(2026-09〜)なので、この時点でメモリに無いことは
+    // 「画像が存在しない」ことを意味しない。ここで即「画像なし」を返すと、
+    //   ・ローカルIndexedDB/クラウドに原本があるのに赤字で「画像なし」と出る
+    //   ・data-scanimg を出さないので inject() の遅延取得自体が起動せず、永久に出ない
+    // という二重の不具合になる。実際に探して見つからなかった時だけ「画像なし」にする。
+    if(window._imgKnownMissing&&window._imgKnownMissing[d.id]){
+      return '<div title="画像ファイルがこの端末にもクラウドにも見つかりません（登録時に画像が添付されなかったか、同期前に削除された可能性があります）" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:'+(sz||56)+'px;color:var(--rd);font-size:10px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>画像なし</div>';
+    }
+    var mh2=sz||56;
+    return '<img data-scanimg="'+d.id+'" alt="" style="max-width:100%;max-height:'+mh2+'px;object-fit:contain;border-radius:4px;display:block;min-height:'+Math.min(mh2,40)+'px">';
+  }
   return shapeSVG(d.shape,sz);
 }
 function getImgUrl(id){return pdfThumbnails[id]||scannedBlobUrls[id]||scannedImages[id]||''}
+// カテゴリは自動登録・手動登録(saveDwg)では設定されないので undefined になりうる。
+// そのまま出すとカードのチップやフィルタに「undefined」と表示されてしまう。
+function catOf(d){return (d&&d.cat)?d.cat:'未分類'}
 function getPdfSrc(id){
   if(typeof scannedPdfs[id]==='string')return scannedPdfs[id];
   if(scannedImages[id]&&scannedImages[id].indexOf('application/pdf')>=0)return scannedImages[id];
@@ -3410,10 +3436,10 @@ function toggleBoardCol(st){if(!S.boardCollapsed)S.boardCollapsed={};S.boardColl
 // cfg: {searchKey, fcatKey, clientFilterKey, searchBoxId, clientFilterBoxId, emptyMsg}
 function drawingGridHTML(items,cfg){
   var _mobile=isMobileDevice();
-  var cats=["すべて"].concat(Array.from(new Set(items.map(function(d){return d.cat}))));
+  var cats=["すべて"].concat(Array.from(new Set(items.map(function(d){return catOf(d)}))));
   var searchVal=S[cfg.searchKey]||'',fcatVal=S[cfg.fcatKey]||'すべて',clientFilterVal=S[cfg.clientFilterKey]||'';
   var fl=items.filter(function(d){
-    if(fcatVal!=='すべて'&&d.cat!==fcatVal)return false;
+    if(fcatVal!=='すべて'&&catOf(d)!==fcatVal)return false;
     if(clientFilterVal){var cf=clientFilterVal.toLowerCase();if((d.client||'').toLowerCase().indexOf(cf)<0)return false}
     if(searchVal){var q=normSearch(searchVal);if(!q)return true;return normSearch(d.name).indexOf(q)>=0||normSearch(d.number).indexOf(q)>=0||normSearch(d.mat).indexOf(q)>=0||normSearch(d.client).indexOf(q)>=0||normSearch(d.size).indexOf(q)>=0||normSearch((d.tags||[]).join(' ')).indexOf(q)>=0}
     return true;
@@ -3436,7 +3462,7 @@ function drawingGridHTML(items,cfg){
         +'<div class="g-thumb" onclick="if(scannedImages['+d.id+']||pdfThumbnails['+d.id+']){event.stopPropagation();openViewer('+d.id+')}">'+thumb(d,64)+'</div>'
         +'<div class="g-name">'+d.name+(d.scanned?'<span class="badge badge-scan">スキャン</span>':'')+(d.docType==='instruction'?'<span class="badge badge-instr">加工指示書</span>':'')+'</div>'
         +'<div class="g-meta">'+d.number+' · '+d.mat+' · <span style="color:var(--ac)">'+esc(d.client)+'</span></div>'
-        +'<div class="g-foot"><span class="g-cat">'+d.cat+'</span>'
+        +'<div class="g-foot"><span class="g-cat">'+esc(catOf(d))+'</span>'
         +'<button class="g-btn" style="font-size:10px;padding:2px 8px" onclick="event.stopPropagation();selAnno('+d.id+');S.tab=\'annotate\';render()">書込</button>'
         +'<button class="g-btn" style="font-size:10px;padding:2px 8px;color:var(--ac)" title="AIで図番・名称・サイズ・得意先を読み取って編集画面に反映" onclick="event.stopPropagation();aiReadCard('+d.id+')">AI読取</button>'
         +(!_mobile?'<button class="g-btn" style="font-size:10px;padding:2px 8px" onclick="event.stopPropagation();S.invDrawing=DRAWINGS.find(function(x){return x.id==='+d.id+'});S.tab=\'invoice\';render()">帳票</button>':'')
@@ -5819,9 +5845,9 @@ function triageDelete(){
 function printDetail(id){
   var d=DRAWINGS.find(function(x){return x.id===id});if(!d)return;
   var html='<html><head><title>'+esc(d.number)+' '+esc(d.name)+'</title><style>body{font-family:sans-serif;padding:40px;color:#333}table{border-collapse:collapse;width:100%;margin-top:16px}th,td{border:1px solid #ccc;padding:8px;text-align:left;font-size:13px}th{background:#f5f5f5}.title{font-size:20px;font-weight:bold;margin-bottom:8px}.sub{font-size:13px;color:#666;margin-bottom:20px}</style></head><body>'
-    +'<div class="title">'+esc(d.number)+' '+esc(d.name)+'</div><div class="sub">'+esc(d.cat)+' · '+esc(d.mat)+' · '+esc(d.size)+'</div>'
+    +'<div class="title">'+esc(d.number)+' '+esc(d.name)+'</div><div class="sub">'+esc(catOf(d))+' · '+esc(d.mat)+' · '+esc(d.size)+'</div>'
     +'<table><tr><th>項目</th><th>内容</th></tr>'
-    +'<tr><td>図面番号</td><td>'+esc(d.number)+'</td></tr><tr><td>品名</td><td>'+esc(d.name)+'</td></tr><tr><td>カテゴリ</td><td>'+esc(d.cat)+'</td></tr><tr><td>材質</td><td>'+esc(d.mat)+'</td></tr><tr><td>サイズ</td><td>'+esc(d.size)+'</td></tr><tr><td>取引先</td><td>'+esc(d.client)+'</td></tr><tr><td>単価</td><td>&yen;'+d.price.toLocaleString()+'</td></tr><tr><td>ステータス</td><td>'+esc(d.status)+'</td></tr><tr><td>日付</td><td>'+esc(d.date)+'</td></tr></table>'
+    +'<tr><td>図面番号</td><td>'+esc(d.number)+'</td></tr><tr><td>品名</td><td>'+esc(d.name)+'</td></tr><tr><td>カテゴリ</td><td>'+esc(catOf(d))+'</td></tr><tr><td>材質</td><td>'+esc(d.mat)+'</td></tr><tr><td>サイズ</td><td>'+esc(d.size)+'</td></tr><tr><td>取引先</td><td>'+esc(d.client)+'</td></tr><tr><td>単価</td><td>&yen;'+d.price.toLocaleString()+'</td></tr><tr><td>ステータス</td><td>'+esc(d.status)+'</td></tr><tr><td>日付</td><td>'+esc(d.date)+'</td></tr></table>'
     +'</body></html>';
   printHTML(html);
 }
