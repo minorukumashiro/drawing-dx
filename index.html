@@ -2029,7 +2029,7 @@ function simColor(v){return v>=80?"#1B8C65":v>=50?"#B06E15":"#888"}
 function normSearch(s){
   return String(s==null?'':s)
     .replace(/[！-～]/g,function(c){return String.fromCharCode(c.charCodeAt(0)-0xFEE0);}) // 全角英数記号→半角
-    .replace(/[ΦφϕØø⌀∅]/g,'φ') // Φ ϕ Ø ø ⌀ ∅ → φ
+    .replace(/[ΦφϕØø⌀∅]/g,'') // φ記号は無視する（「Φ16」「φ16」「16」をすべて同じ扱いにする）
     .replace(/[×✕✖*]/g,'x') // × ✕ ✖ ＊ → x
     .replace(/[s　]+/g,'') // 空白は無視
     .toLowerCase();
@@ -4890,10 +4890,13 @@ function findSimilarDrawing(of){
   });
   return bestScore>=65?{drawing:best,score:bestScore}:null;
 }
-// 依頼書には品名欄が無いことが多い。サイズ「φ37-777」から「内径ホーニング φ37」を作る。
+// 依頼書には品名欄が無いことが多い。サイズ「37-777」から「内径ホーニング φ37」を作る。
+// サイズ欄はφ無し（ユーザー指定）だが、品名は従来どおりφ付きで書く。
 function honingNameFromSize(size){
   var bore=String(size||'').split('-')[0].trim();
-  return bore?('内径ホーニング '+bore):'内径ホーニング';
+  if(!bore)return '内径ホーニング';
+  if(/^[0-9.]/.test(bore))bore='φ'+bore;
+  return '内径ホーニング '+bore;
 }
 function matchExistingName(ocrName){
   if(!ocrName||!DRAWINGS||!DRAWINGS.length)return ocrName;
