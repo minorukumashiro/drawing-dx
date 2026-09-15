@@ -202,25 +202,35 @@ exports.extractFields = onRequest({
     const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY.value() });
     const clientList = Array.isArray(clients) ? clients.filter(Boolean).map(String).slice(0, 300) : [];
 
+    // 【重要】不二新製作所のような表形式の依頼書は、1枚に複数の管理番号（=加工対象）が
+    // 並ぶことが多い。以前は1枚から1件分しか返せず2行目以降を取りこぼしていたため、
+    // items 配列で行ごとに返す。図面1枚なら items は1要素。
+    const itemProps = {
+      number:   { type: 'string', description: '図番/図面番号/管理番号（表題欄のDWG.NO・図面番号・不二新等の管理番号。例 260911-TRD-1）。無ければ空文字。' },
+      name:     { type: 'string', description: '品名/名称/TITLE（部品の名前）。依頼書で品名欄が無い場合は加工内容から補う（例「内径ホーニング φ37」）。' },
+      material: { type: 'string', description: '材質（例 SUS304, S45C, A5052, SCM435, STKM13C, 64チタン）。無ければ空文字。' },
+      size:     { type: 'string', description: 'サイズ。内径ホーニング加工の丸物なら「φ仕上げ内径-全長」形式（例 φ65-163, φ115-487）。素材外径や下穴径ではなく、仕上げ後の内径を使うこと。それ以外は図面の主要寸法表記（例 φ80×t12）。無ければ空文字。' },
+      surface:  { type: 'string', description: '表面処理（メッキ/めっき/アルマイト/無電解ニッケル/硬質クロム等）。無ければ空文字。' },
+      tolerance:{ type: 'string', description: '代表的な公差（例 +0.02〜+0.05, +0.3/+0.1, ±0.1）。無ければ空文字。' },
+      roughness:{ type: 'string', description: '表面粗さ（例 Ra0.2, Rz0.8, 1.6S, ▽▽▽▽）。無ければ空文字。' },
+      quantity: { type: 'string', description: '数量（本数・個数）。無ければ空文字。' },
+      category: { type: 'string', description: 'フランジ / シャフト / ブラケット / プレート / スペーサー / その他 のいずれか。判断できなければ空文字。' },
+      note:     { type: 'string', description: 'この行に固有の、見積・加工上重要な注記があれば一言（例「素材φ60×777・下穴φ36.7貫通」「トンボ加工不可」）。無ければ空文字。' }
+    };
     const tool = {
       name: 'report_drawing_fields',
-      description: '図面または依頼書から読み取った各フィールドを報告する。読み取れない項目は必ず空文字にする。',
+      description: '図面または依頼書から読み取った内容を報告する。読み取れない項目は必ず空文字にする。',
       input_schema: {
         type: 'object',
         properties: {
-          number:   { type: 'string', description: '図番/図面番号/管理番号（表題欄のDWG.NO・図面番号・不二新等の管理番号）。無ければ空文字。' },
-          name:     { type: 'string', description: '品名/名称/TITLE（部品の名前）。無ければ空文字。' },
-          material: { type: 'string', description: '材質（例 SUS304, S45C, A5052, SCM435, STKM13C, 64チタン）。無ければ空文字。' },
-          size:     { type: 'string', description: 'サイズ。内径ホーニング加工の丸物なら「φ内径-全長」形式（例 φ65-163, φ115-487）。それ以外は図面の主要寸法表記（例 φ80×t12）。無ければ空文字。' },
-          client:   { type: 'string', description: '得意先/発注元の会社名。図面や依頼書にレターヘッド・社名・ロゴがある場合のみ記入。FAX番号やメール送信元は画像に写っていないので、社名が図中に無ければ必ず空文字。絶対に推測しないこと。' },
-          surface:  { type: 'string', description: '表面処理（メッキ/めっき/アルマイト/無電解ニッケル/硬質クロム等）。無ければ空文字。' },
-          tolerance:{ type: 'string', description: '代表的な公差（例 +0.02〜+0.05, ±0.1）。無ければ空文字。' },
-          roughness:{ type: 'string', description: '表面粗さ（例 Ra0.2, Rz0.8, 1.6S, ▽▽▽▽）。無ければ空文字。' },
-          quantity: { type: 'string', description: '数量（本数・個数）。無ければ空文字。' },
-          category: { type: 'string', description: 'フランジ / シャフト / ブラケット / プレート / スペーサー / その他 のいずれか。判断できなければ空文字。' },
-          note:     { type: 'string', description: '見積・加工上重要な注記があれば一言（例「トンボ加工不可」「内径メッキ後ホーニング」）。無ければ空文字。' }
+          client: { type: 'string', description: '得意先/発注元の会社名（書類全体で1つ）。図面や依頼書にレターヘッド・社名・ロゴがある場合のみ記入。FAX番号やメール送信元は画像に写っていないので、社名が図中に無ければ必ず空文字。絶対に推測しないこと。' },
+          items: {
+            type: 'array',
+            description: 'この書類に含まれる加工対象。表形式の依頼書で管理番号の行が複数あれば行ごとに1要素（上から順）。図面1枚なら1要素。空欄行は含めない。',
+            items: { type: 'object', properties: itemProps, required: ['number', 'name', 'material', 'size'] }
+          }
         },
-        required: ['number', 'name', 'material', 'size', 'client']
+        required: ['client', 'items']
       }
     };
 
@@ -230,9 +240,18 @@ exports.extractFields = onRequest({
       '',
       '重要な原則:',
       '・読み取れない項目は推測せず必ず空文字にする。',
-      '・ホーニングは内径加工なので、丸物パイプ/シリンダは内径と全長を優先し size は「φ内径-全長」形式にする（例 内径φ65・全長163 → φ65-163）。',
+      '・ホーニングは内径加工なので、丸物パイプ/シリンダは内径と全長を優先し size は「φ仕上げ内径-全長」形式にする（例 内径φ65・全長163 → φ65-163）。素材外径や下穴径ではなく、仕上げ後の内径を使う。',
       '・得意先は、図面/依頼書の中に社名・レターヘッド・会社ロゴが実際に書かれている場合だけ記入する。書かれていなければ空文字（FAX番号やメール送信元は画像に無いため判定不可）。',
       '・材質・図番・数量は表題欄や依頼書の該当欄を正確に写す。数字の桁（0.02と0.2など）を間違えない。',
+      '',
+      '表形式の依頼書（不二新製作所など）の読み方:',
+      '・「管理番号」欄の値をそのまま number にする（例 260911-TRD-1）。DWG-#### のような自動採番に置き換えないこと。',
+      '・管理番号の行が複数あるときは、行ごとに items の要素を1つずつ作る。1件にまとめたり、先頭行だけ返したりしない。',
+      '・寸法欄は「素材寸法（下穴径）⇒ 仕上げ内径 ホーニング」の2行1組で書かれることが多い。',
+      '　例「φ60 x 777（φ36.7貫通）」＋「⇒ φ37(+0.3/+0.1)ホーニング」は、素材外径φ60・全長777・下穴φ36.7貫通を、内径φ37（公差+0.3/+0.1）へ仕上げる指示。',
+      '　この場合 size は仕上げ内径と全長をとって「φ37-777」、tolerance は「+0.3/+0.1」、素材寸法と下穴は note に残す。',
+      '・依頼書には品名欄が無いことが多い。その場合 name は加工内容から補う（例「内径ホーニング φ37」）。',
+      '・区分欄（大至急/見積/注文/問合せ/回答）の○は note に書いてよいが、他の項目を推測する根拠にはしない。',
       clientList.length ? ('\n既存の得意先名（社名がこれらに近ければ、この表記に正規化して返す）:\n' + clientList.join(' / ')) : ''
     ].join('\n');
 
@@ -252,8 +271,14 @@ exports.extractFields = onRequest({
     });
 
     const tu = resp.content.find(b => b.type === 'tool_use');
-    const fields = (tu && tu.input) ? tu.input : {};
-    return res.json({ fields });
+    const out = (tu && tu.input) ? tu.input : {};
+    const client = out.client || '';
+    const items = (Array.isArray(out.items) ? out.items : [])
+      .filter(it => it && (it.number || it.name || it.material || it.size))
+      .map(it => Object.assign({}, it, { client }));
+    // fields は従来どおり「1件分」。古いクライアントや単票の図面はこれだけ見ればよい。
+    const fields = items[0] || { client };
+    return res.json({ fields, items });
   } catch (error) {
     console.error('extractFields error:', error);
     return res.status(500).json({ error: error.message });

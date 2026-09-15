@@ -2003,6 +2003,17 @@ function thumb(d,sz){
   return shapeSVG(d.shape,sz);
 }
 function getImgUrl(id){return pdfThumbnails[id]||scannedBlobUrls[id]||scannedImages[id]||''}
+// 【重要】nextId は他端末の登録に追いつかず、既存idと衝突して画像(images/<id>)を
+// 上書きしてしまう事故が過去にあった。必ず max(既存id)+1 を下回らないようにし、
+// 念のため空きidまで進めてから採番する。
+function allocDrawingId(){
+  var maxId=0;
+  DRAWINGS.forEach(function(d){var n=Number(d.id)||0;if(n>maxId)maxId=n;});
+  if(!(nextId>maxId))nextId=maxId+1;
+  var used={};DRAWINGS.forEach(function(d){used[String(d.id)]=true;});
+  while(used[String(nextId)]||scannedImages[nextId]||scannedPdfs[nextId]||pdfThumbnails[nextId])nextId++;
+  return nextId++;
+}
 // カテゴリは自動登録・手動登録(saveDwg)では設定されないので undefined になりうる。
 // そのまま出すとカードのチップやフィルタに「undefined」と表示されてしまう。
 function catOf(d){return (d&&d.cat)?d.cat:'未分類'}
@@ -2442,7 +2453,7 @@ function render(){
   if(S.jissekiOpen){h+=jissekiModalHTML();}
 
   // REGISTER
-  if(S.regOpen){var of=S.ocrF;var ocr='';var dupWarn='';var docWarn='';if(S.ocrSt==='running')ocr='<div class="ocr-bar run"><div class="dots" style="margin:0"><span></span><span></span><span></span></div>AI読取中... 図面のテキストを解析しています</div>';else if(S.ocrSt==='done'){var cnt=0;if(of.number)cnt++;if(of.name)cnt++;if(of.material)cnt++;if(of.size)cnt++;if(of.client)cnt++;if(of.surface)cnt++;ocr='<div class="ocr-bar ok"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>AI読取完了 — '+cnt+'項目を自動検出・入力しました'+(of.surface?' (表面処理:'+esc(of.surface)+')':'')+(of.tolerance?' (公差:'+esc(of.tolerance)+')':'')+(of.roughness?' (粗さ:'+esc(of.roughness)+')':'')+'</div>';var sim=findSimilarDrawing(of);if(sim){var sd=sim.drawing;dupWarn='<div style="background:#FFF3CD;border:1px solid #F0AD4E;border-radius:8px;padding:10px 14px;margin-bottom:2px;font-size:12px;color:#856404"><strong>⚠ 重複の可能性あり</strong> — 類似する図面が登録済みです：図面番号「'+esc(sd.number)+'」'+esc(sd.name)+' / '+esc(sd.client)+'</div>';}var dk=detectNonDrawingDoc(of.rawText)||detectNonDrawingDoc(S.regName);if(dk)docWarn='<div style="background:#FDECEC;border:1px solid #D32F2F;border-radius:8px;padding:10px 14px;margin-bottom:2px;font-size:12px;color:#D32F2F"><strong>⚠ 図面ではない可能性</strong> — この書類は「'+esc(dk)+'」と思われます。図面でなければ登録せず、スキャンフォルダ側で管理してください。</div>';}
+  if(S.regOpen){var of=S.ocrF;var ocr='';var dupWarn='';var docWarn='';if(S.ocrSt==='running')ocr='<div class="ocr-bar run"><div class="dots" style="margin:0"><span></span><span></span><span></span></div>AI読取中... 図面のテキストを解析しています</div>';else if(S.ocrSt==='done'){var cnt=0;if(of.number)cnt++;if(of.name)cnt++;if(of.material)cnt++;if(of.size)cnt++;if(of.client)cnt++;if(of.surface)cnt++;ocr='<div class="ocr-bar ok"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>AI読取完了 — '+cnt+'項目を自動検出・入力しました'+(of.moreItems?' ／ ⚠ この書類には他に'+of.moreItems+'件の管理番号があります（登録後に待機カードの「AI読取」で分割できます）':'')+(of.surface?' (表面処理:'+esc(of.surface)+')':'')+(of.tolerance?' (公差:'+esc(of.tolerance)+')':'')+(of.roughness?' (粗さ:'+esc(of.roughness)+')':'')+'</div>';var sim=findSimilarDrawing(of);if(sim){var sd=sim.drawing;dupWarn='<div style="background:#FFF3CD;border:1px solid #F0AD4E;border-radius:8px;padding:10px 14px;margin-bottom:2px;font-size:12px;color:#856404"><strong>⚠ 重複の可能性あり</strong> — 類似する図面が登録済みです：図面番号「'+esc(sd.number)+'」'+esc(sd.name)+' / '+esc(sd.client)+'</div>';}var dk=detectNonDrawingDoc(of.rawText)||detectNonDrawingDoc(S.regName);if(dk)docWarn='<div style="background:#FDECEC;border:1px solid #D32F2F;border-radius:8px;padding:10px 14px;margin-bottom:2px;font-size:12px;color:#D32F2F"><strong>⚠ 図面ではない可能性</strong> — この書類は「'+esc(dk)+'」と思われます。図面でなければ登録せず、スキャンフォルダ側で管理してください。</div>';}
   h+='<div class="modal-bg" onclick="closeReg()"><div class="modal" onclick="event.stopPropagation()"><div class="modal-head"><h2>図面登録（AI-OCR取込）</h2><button class="close-btn" onclick="closeReg()">&times;</button></div><div style="padding:18px 22px"><div class="upload-area '+(S.regPrev?'has':'')+'">'+(S.regPrev?(S.regIsPdf?'<div style="text-align:center;padding:10px"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#C03030" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><div style="margin-top:4px;font-size:11px;color:#C03030;font-weight:500">PDF読込済</div></div>':'<img id="regPrevImg" style="max-width:100%;max-height:160px;object-fit:contain;border-radius:6px;display:block;margin:0 auto">')+'<div style="margin-top:6px;font-size:11px;color:var(--gn);font-weight:500">'+esc(S.regName)+'</div>':'<h3 style="font-size:12px;margin-top:4px">スキャン図面をアップロード</h3><p style="font-size:11px;color:var(--tx3)">PDF,PNG,JPEG対応・OCR自動読取</p>')+'<input type="file" accept="image/*,.pdf" onchange="handleFile(event)"></div>'+ocr+dupWarn+docWarn+'<div class="f-row"><div class="f-field"><label>図面番号*'+(of.number?'<span class="ocr-tag">OCR</span>':'')+'</label><input id="rN" class="'+(of.number?'ocr-filled':'')+'" value="'+esc(of.number||'DWG-'+String(400+nextId).padStart(4,'0'))+'"></div><div class="f-field"><label>図面名称*'+(of.name?'<span class="ocr-tag">OCR</span>':'')+'</label><input id="rNm" class="'+(of.name?'ocr-filled':'')+'" value="'+esc(of.name||'')+'"></div></div><div class="f-field" style="margin-bottom:14px"><label>種別</label><select id="rDocType"><option value="drawing">図面</option><option value="instruction">加工指示書（図面代用）</option></select></div><div class="f-row"><div class="f-field"><label>材質'+(of.material?'<span class="ocr-tag">OCR</span>':'')+'</label><input id="rM" list="matList" class="'+(of.material?'ocr-filled':'')+'" value="'+esc(of.material||'')+'"></div><div class="f-field"><label>サイズ'+(of.size?'<span class="ocr-tag">OCR</span>':'')+'</label><input id="rSz" class="'+(of.size?'ocr-filled':'')+'" value="'+esc(of.size||'')+'"></div></div><div class="f-row"><div class="f-field"><label>取引先</label><input id="rCl" list="clList" value="'+esc(of.client||S.regFileClient||'')+'"></div><div class="f-field"><label>単価</label><input id="rPr" type="number" onwheel="this.blur()"></div></div><div class="f-row"><div class="f-field"><label>ステータス</label><select id="rSt">'+MASTERS.statuses.map(function(s){return'<option'+(s==='待機'?' selected':'')+'>'+s+'</option>'}).join('')+'</select></div><div class="f-field"><label>優先度</label><select id="rPri">'+["高","中","低"].map(function(p){return'<option'+(p==="中"?' selected':'')+'>'+p+'</option>'}).join('')+'</select></div></div><div class="f-field" style="margin-bottom:12px"><label>タグ</label><input id="rTg" value="'+esc(of.tags||'')+'"></div><div class="f-field"><label>OCRテキスト</label><textarea readonly style="background:var(--bg2);font-size:10px;color:var(--tx2)">'+esc(of.rawText||'アップロード後に表示')+'</textarea></div></div><div class="modal-foot"><button class="btn-cancel" onclick="closeReg()">キャンセル</button><button class="btn-save" onclick="saveDwg()"'+(S.ocrSt==='running'?' disabled':'')+'>登録</button></div></div></div>'}
 
   // 待機の一括整理モーダル
@@ -4559,9 +4570,10 @@ async function bulkSubmit(){
         existRec.imgVer=Date.now();
         added++;
       }else{
+        var newId=allocDrawingId();
         var newDrawing={
-          id:nextId++,
-          number:it.number||('DWG-'+String(nextId).padStart(4,'0')),
+          id:newId,
+          number:it.number||('DWG-'+String(newId).padStart(4,'0')),
           name:it.itemName||it.name,
           cat:it.cat||'未指定',
           mat:it.mat||'未指定',
@@ -4628,7 +4640,8 @@ function runOCR(img,token){
   if(el)el.innerHTML='<div class="dots" style="margin:0"><span></span><span></span><span></span></div>AIで精密読取り中...';
   aiExtractFields(img).then(function(res){if(token!==S.regReadToken)return;
     if(res&&res.error)throw new Error(res.error);
-    var fx=(res&&res.fields)||{};
+    var items=(res&&res.items&&res.items.length)?res.items:[(res&&res.fields)||{}];
+    var fx=items[0]||{};
     if(!(fx.number||fx.name||fx.material||fx.size||fx.client))throw new Error('AI応答が空');
     var f={};
     if(fx.number)f.number=fx.number;
@@ -4642,6 +4655,13 @@ function runOCR(img,token){
     if(fx.quantity)f.quantity=fx.quantity;
     var tg=[];if(fx.category)tg.push(fx.category);if(fx.material)tg.push(fx.material);if(fx.surface)tg.push(fx.surface);if(tg.length)f.tags=tg.join(', ');
     f.rawText='[AI Opus 4.8 読取]\n'+Object.keys(fx).filter(function(k){return fx[k]}).map(function(k){return k+': '+fx[k]}).join('\n');
+    // 依頼書に複数の管理番号があった場合、登録画面は1件分しか入力できないので、
+    // 取りこぼしに気づけるよう読取テキストに残件を列挙しておく。
+    if(items.length>1){
+      f.moreItems=items.length-1;
+      f.rawText+='\n\n【この書類には他に '+(items.length-1)+' 件あります（登録後、待機カードの「AI読取」で分割できます）】\n'
+        +items.slice(1).map(function(it){return '・'+(it.number||'(管理番号なし)')+'  '+(it.material||'')+'  '+(it.size||'')}).join('\n');
+    }
     S.ocrF=f;S.ocrSt='done';render();
   }).catch(function(e){if(token!==S.regReadToken)return;
     console.warn('AI読取失敗→Cloud Visionへ:',e&&e.message||e);
@@ -4674,8 +4694,12 @@ function aiReadCard(id){
   }).then(function(res){
     if(!res)return;
     if(res.error){alert('AI読取に失敗しました: '+res.error);return;}
-    var fx=res.fields||{};
+    var items=(res.items&&res.items.length)?res.items:[res.fields||{}];
+    var fx=items[0]||{};
     if(!(fx.number||fx.name||fx.material||fx.size||fx.client)){toast('AIは有効な項目を読み取れませんでした');return;}
+    // 2件目以降（不二新の依頼書のように1枚に複数の管理番号がある場合）を先に登録する。
+    // 編集モーダルを開く前に済ませないと、モーダル操作中に一覧が作り変わって分かりにくい。
+    var extra=addExtraItemsFromDoc(d,items.slice(1));
     editDrawing(id);
     var ed=S.editDwg;if(!ed)return;
     if(fx.number)ed.number=fx.number;
@@ -4684,8 +4708,52 @@ function aiReadCard(id){
     if(fx.size)ed.size=fx.size;
     if(fx.client)ed.client=fx.client;
     render();
-    toast('🖼 AI読取完了 — 内容を確認して「保存」を押してください'+(fx.note?'（注記: '+fx.note+'）':''));
+    toast('🖼 AI読取完了 — 内容を確認して「保存」を押してください'
+      +(extra>0?'（他 '+extra+' 件を別案件として追加しました）':'')
+      +(fx.note?'（注記: '+fx.note+'）':''));
   }).catch(function(e){alert('AI読取エラー: '+(e&&e.message||e));});
+}
+
+// 1枚の依頼書から読み取った2件目以降を、元の案件と同じ画像を持つ別レコードとして追加する。
+// 不二新製作所の依頼書は1枚に管理番号が複数並ぶことが多く、管理番号ごとに数量・納期・
+// 単価が違うため、案件としては分けて進捗を追えるようにする。戻り値は追加した件数。
+function addExtraItemsFromDoc(src,rest){
+  if(!src||!rest||!rest.length)return 0;
+  var cand=rest.filter(function(it){return it&&(it.number||it.name||it.size)});
+  if(!cand.length)return 0;
+  var lines=cand.map(function(it){return '・'+(it.number||'(管理番号なし)')+'  '+(it.material||'')+'  '+(it.size||'');});
+  if(!confirm('この書類には他に '+cand.length+' 件の管理番号があります。\n別案件として追加しますか？\n\n'+lines.join('\n')+'\n\n（同じ書類の画像を共有し、ステータスは「'+(src.status||'待機')+'」で追加します）'))return 0;
+  var added=0;
+  cand.forEach(function(it){
+    var num=(it.number||'').trim();
+    if(num&&DRAWINGS.some(function(x){return String(x.number).toUpperCase()===num.toUpperCase()}))return; // 既に登録済み
+    var nid=allocDrawingId();
+    var nd={
+      id:nid,
+      number:num||('DWG-'+String(nid).padStart(4,'0')),
+      name:matchExistingName(it.name||'')||honingNameFromSize(it.size),
+      mat:it.material||src.mat||'未指定',
+      size:it.size||'未指定',
+      client:it.client||src.client||'未指定',
+      price:0,
+      date:new Date().toISOString().slice(0,10),
+      tags:(src.tags||[]).slice(),
+      status:src.status||'待機',
+      priority:src.priority||'中',
+      docType:src.docType||'instruction',
+      qty:it.quantity||'',
+      scanned:true,
+      imgVer:Date.now()
+    };
+    // 同じ書類なので画像・PDF・サムネイルを共有する
+    if(typeof scannedPdfs[src.id]==='string')scannedPdfs[nid]=scannedPdfs[src.id];
+    if(scannedImages[src.id])scannedImages[nid]=scannedImages[src.id];
+    if(pdfThumbnails[src.id])pdfThumbnails[nid]=pdfThumbnails[src.id];
+    DRAWINGS.unshift(nd);
+    added++;
+  });
+  if(added)saveAll();
+  return added;
 }
 
 function runOCRVision(img,token){
@@ -4822,6 +4890,11 @@ function findSimilarDrawing(of){
   });
   return bestScore>=65?{drawing:best,score:bestScore}:null;
 }
+// 依頼書には品名欄が無いことが多い。サイズ「φ37-777」から「内径ホーニング φ37」を作る。
+function honingNameFromSize(size){
+  var bore=String(size||'').split('-')[0].trim();
+  return bore?('内径ホーニング '+bore):'内径ホーニング';
+}
 function matchExistingName(ocrName){
   if(!ocrName||!DRAWINGS||!DRAWINGS.length)return ocrName;
   var found=DRAWINGS.find(function(d){return d.name&&d.name!==ocrName&&d.name.indexOf(ocrName)>=0});
@@ -4835,7 +4908,7 @@ function detectNonDrawingDoc(text){
   if(/見積書|御見積|お見積/.test(text))return '見積書';
   return null;
 }
-function saveDwg(){var num=document.getElementById('rN').value.trim(),nm=document.getElementById('rNm').value.trim();if(!num||!nm){alert('図面番号と名称は必須');return}var dupCheck=DRAWINGS.find(function(d){return d.number.toUpperCase()===num.toUpperCase()});if(dupCheck){var ok=confirm('⚠ 重複確認\n\n図面番号「'+num+'」はすでに登録されています。\n\n登録済み：'+dupCheck.name+' / '+dupCheck.client+'\n\nそれでも登録しますか？');if(!ok)return;}var id=nextId++;var cl=document.getElementById('rCl').value.trim()||'未指定';DRAWINGS.unshift({id:id,number:num,name:nm,mat:document.getElementById('rM').value.trim()||'未指定',size:document.getElementById('rSz').value.trim()||'未指定',client:cl,price:parseInt(document.getElementById('rPr').value)||0,date:new Date().toISOString().slice(0,10),tags:(document.getElementById('rTg').value||'').split(/[,、]/).map(function(t){return t.trim()}).filter(Boolean),status:document.getElementById('rSt').value,priority:document.getElementById('rPri').value,docType:document.getElementById('rDocType').value,scanned:!!S.regPrev,isPdf:S.regIsPdf,imgVer:Date.now()});if(S.regPrev){scannedImages[id]=S.regPrev;if(S.regBlobUrl)scannedBlobUrls[id]=S.regBlobUrl;if(S.regIsPdf)scannedPdfs[id]=true}S.regOpen=false;S.tab='list';S.fcat='すべて';S.search='';saveAll();render()}
+function saveDwg(){var num=document.getElementById('rN').value.trim(),nm=document.getElementById('rNm').value.trim();if(!num||!nm){alert('図面番号と名称は必須');return}var dupCheck=DRAWINGS.find(function(d){return d.number.toUpperCase()===num.toUpperCase()});if(dupCheck){var ok=confirm('⚠ 重複確認\n\n図面番号「'+num+'」はすでに登録されています。\n\n登録済み：'+dupCheck.name+' / '+dupCheck.client+'\n\nそれでも登録しますか？');if(!ok)return;}var id=allocDrawingId();var cl=document.getElementById('rCl').value.trim()||'未指定';DRAWINGS.unshift({id:id,number:num,name:nm,mat:document.getElementById('rM').value.trim()||'未指定',size:document.getElementById('rSz').value.trim()||'未指定',client:cl,price:parseInt(document.getElementById('rPr').value)||0,date:new Date().toISOString().slice(0,10),tags:(document.getElementById('rTg').value||'').split(/[,、]/).map(function(t){return t.trim()}).filter(Boolean),status:document.getElementById('rSt').value,priority:document.getElementById('rPri').value,docType:document.getElementById('rDocType').value,scanned:!!S.regPrev,isPdf:S.regIsPdf,imgVer:Date.now()});if(S.regPrev){scannedImages[id]=S.regPrev;if(S.regBlobUrl)scannedBlobUrls[id]=S.regBlobUrl;if(S.regIsPdf)scannedPdfs[id]=true}S.regOpen=false;S.tab='list';S.fcat='すべて';S.search='';saveAll();render()}
 function genInvoice(){
   var s=document.getElementById('invSel');
   var selId=s?s.value:'';
