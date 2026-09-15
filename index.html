@@ -3972,17 +3972,26 @@ function handleDropSearch(event){
 
 function processRegisterFile(f){
   if(!f)return;
+  var token=S.regReadToken=(S.regReadToken||0)+1;
   S.regName=f.name;
   S.regBlobUrl=URL.createObjectURL(f);
   S.regFileObj=f;
+  S.regPrev=null;
+  S.regIsPdf=f.type==='application/pdf'||/\.pdf$/i.test(f.name);
+  var cm=f.name.match(/_\d{8}_\d{6}([^.]+)\.pdf$/i);
+  S.regFileClient=cm?cm[1]:'';
+  S.ocrSt='running';S.ocrF={};render();
   var r=new FileReader();
   r.onload=function(ev){
+    if(token!==S.regReadToken)return;
     S.regPrev=ev.target.result;
-    S.regIsPdf=f.type==='application/pdf'||f.name.toLowerCase().endsWith('.pdf');
-    S.ocrSt='running';
-    S.ocrF={};
+    if(S.regIsPdf)S.regPrev=S.regPrev.replace(/^data:[^;]*;/,'data:application/pdf;');
     render();
-    if(S.regIsPdf){ocrFromPdf(ev.target.result)}else{runOCR(ev.target.result)}
+    if(S.regIsPdf){ocrFromPdf(S.regPrev,token)}else{runOCR(S.regPrev,token)}
+  };
+  r.onerror=function(){
+    if(token!==S.regReadToken)return;
+    S.ocrSt='done';S.ocrF={rawText:'ファイルを読み込めませんでした。もう一度選択してください。'};render();
   };
   r.readAsDataURL(f);
 }
@@ -4162,7 +4171,7 @@ function saveCurrentAnnotations(){
   }
   saveAll(true);
 }
-function openRegister(){S.regOpen=true;S.regPrev=null;S.regName='';S.regIsPdf=false;S.ocrSt='idle';S.ocrF={};S.regFileClient='';render()}
+function openRegister(){S.regReadToken=(S.regReadToken||0)+1;S.regFileObj=null;S.regBlobUrl=null;S.regOpen=true;S.regPrev=null;S.regName='';S.regIsPdf=false;S.ocrSt='idle';S.ocrF={};S.regFileClient='';render()}
 
 // === ALRIT ZIP IMPORT ===
 async function importAlritZip(e){
@@ -4542,30 +4551,32 @@ async function bulkSubmit(){
     alert('登録エラー: '+e.message);
   }
 }
-function closeReg(){S.regOpen=false;render()}
-function handleFile(e){var f=e.target.files[0];if(!f)return;S.regName=f.name;S.regBlobUrl=URL.createObjectURL(f);S.regFileObj=f;var cm=f.name.match(/_\d{8}_\d{6}([^.]+)\.pdf$/i);S.regFileClient=cm?cm[1]:'';var r=new FileReader();r.onload=function(ev){S.regPrev=ev.target.result;S.regIsPdf=f.type==='application/pdf';S.ocrSt='running';S.ocrF={};render();if(S.regIsPdf){ocrFromPdf(ev.target.result)}else{runOCR(ev.target.result)}};r.readAsDataURL(f)}
+function closeReg(){S.regReadToken=(S.regReadToken||0)+1;S.regOpen=false;render()}
+function handleFile(e){processRegisterFile(e.target.files[0]);}
 
-function ocrFromPdf(dataUrl){
+function ocrFromPdf(dataUrl,token){
+  if(token!==S.regReadToken)return;
   if(typeof pdfjsLib==='undefined'){S.ocrSt='done';S.ocrF={rawText:'PDF読込ライブラリなし — 手動入力してください'};render();return}
   try{
     var raw=atob(dataUrl.split(',')[1]);var arr=new Uint8Array(raw.length);for(var i=0;i<raw.length;i++)arr[i]=raw.charCodeAt(i);
-    pdfjsLib.getDocument({data:arr}).promise.then(function(pdf){return pdf.getPage(1)}).then(function(page){
+    pdfjsLib.getDocument({data:arr}).promise.then(function(pdf){if(token!==S.regReadToken)return;return pdf.getPage(1)}).then(function(page){if(token!==S.regReadToken)return;
       var vp=page.getViewport({scale:3});
       var cv=document.createElement('canvas');cv.width=vp.width;cv.height=vp.height;
       var ctx=cv.getContext('2d');
       return page.render({canvasContext:ctx,viewport:vp}).promise.then(function(){
         var imgData=cv.toDataURL('image/jpeg',0.88);
-        runOCR(imgData);
+        runOCR(imgData,token);
       });
-    }).catch(function(err){S.ocrSt='done';S.ocrF={rawText:'PDF解析エラー: '+err.message};render()});
+    }).catch(function(err){if(token!==S.regReadToken)return;S.ocrSt='done';S.ocrF={rawText:'PDF解析エラー: '+err.message};render()});
   }catch(err){S.ocrSt='done';S.ocrF={rawText:'PDFエラー: '+err.message};render()}
 }
 
 // AI(Claude Opus 4.8) 精密読取り → 失敗時はCloud Vision+正規表現(runOCRVision)にフォールバック
-function runOCR(img){
+function runOCR(img,token){
+  if(token!==S.regReadToken)return;
   var el=document.querySelector('.ocr-bar.run');
   if(el)el.innerHTML='<div class="dots" style="margin:0"><span></span><span></span><span></span></div>AIで精密読取り中...';
-  aiExtractFields(img).then(function(res){
+  aiExtractFields(img).then(function(res){if(token!==S.regReadToken)return;
     if(res&&res.error)throw new Error(res.error);
     var fx=(res&&res.fields)||{};
     if(!(fx.number||fx.name||fx.material||fx.size||fx.client))throw new Error('AI応答が空');
@@ -4582,9 +4593,9 @@ function runOCR(img){
     var tg=[];if(fx.category)tg.push(fx.category);if(fx.material)tg.push(fx.material);if(fx.surface)tg.push(fx.surface);if(tg.length)f.tags=tg.join(', ');
     f.rawText='[AI Opus 4.8 読取]\n'+Object.keys(fx).filter(function(k){return fx[k]}).map(function(k){return k+': '+fx[k]}).join('\n');
     S.ocrF=f;S.ocrSt='done';render();
-  }).catch(function(e){
+  }).catch(function(e){if(token!==S.regReadToken)return;
     console.warn('AI読取失敗→Cloud Visionへ:',e&&e.message||e);
-    runOCRVision(img);
+    runOCRVision(img,token);
   });
 }
 
@@ -4627,7 +4638,8 @@ function aiReadCard(id){
   }).catch(function(e){alert('AI読取エラー: '+(e&&e.message||e));});
 }
 
-function runOCRVision(img){
+function runOCRVision(img,token){
+  if(token!==S.regReadToken)return;
   var el=document.querySelector('.ocr-bar.run');
   if(el)el.innerHTML='<div class="dots" style="margin:0"><span></span><span></span><span></span></div>Cloud Vision OCR中...';
   console.log('OCR画像サイズ:',(img.length*0.75/1024/1024).toFixed(1),'MB');
@@ -4635,16 +4647,16 @@ function runOCRVision(img){
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({image:img})
-  }).then(function(r){return r.json()}).then(function(data){
+  }).then(function(r){if(token!==S.regReadToken)return;return r.json()}).then(function(data){if(token!==S.regReadToken)return;
     var t=data.text||'';
     console.log('Cloud Vision成功, テキスト長:',t.length);
     if(t.replace(/\s/g,'').length<3){S.ocrSt='done';S.ocrF={rawText:'テキスト未検出 — 手動入力してください'};render();return}
     var f=parseOCR(t);if(f.name)f.name=matchExistingName(f.name);f.rawText='[Cloud Vision]\n'+t;S.ocrF=f;S.ocrSt='done';render();
-  }).catch(function(e){
+  }).catch(function(e){if(token!==S.regReadToken)return;
     console.warn('Cloud Vision失敗:',e.message);
     if(el)el.innerHTML='<div class="dots" style="margin:0"><span></span><span></span><span></span></div>ローカルOCR中...';
     if(typeof Tesseract==='undefined'){S.ocrSt='done';S.ocrF={rawText:'OCR失敗: '+e.message};render();return}
-    Tesseract.recognize(img,'jpn+eng',{logger:function(m){if(m.status==='recognizing text'&&m.progress){var el2=document.querySelector('.ocr-bar.run');if(el2)el2.innerHTML='<div class="dots" style="margin:0"><span></span><span></span><span></span></div>ローカルOCR中... '+Math.round(m.progress*100)+'%'}}}).then(function(r){var t=r.data.text||'';if(t.replace(/\s/g,'').length<3){S.ocrSt='done';S.ocrF={rawText:'テキスト未検出 — 手動入力してください'};render();return}var f=parseOCR(t);if(f.name)f.name=matchExistingName(f.name);f.rawText='[Tesseract]\n'+t;S.ocrF=f;S.ocrSt='done';render()}).catch(function(){S.ocrSt='done';S.ocrF={rawText:'OCR失敗 — 手動入力してください'};render()});
+    Tesseract.recognize(img,'jpn+eng',{logger:function(m){if(token!==S.regReadToken)return;if(m.status==='recognizing text'&&m.progress){var el2=document.querySelector('.ocr-bar.run');if(el2)el2.innerHTML='<div class="dots" style="margin:0"><span></span><span></span><span></span></div>ローカルOCR中... '+Math.round(m.progress*100)+'%'}}}).then(function(r){if(token!==S.regReadToken)return;var t=r.data.text||'';if(t.replace(/\s/g,'').length<3){S.ocrSt='done';S.ocrF={rawText:'テキスト未検出 — 手動入力してください'};render();return}var f=parseOCR(t);if(f.name)f.name=matchExistingName(f.name);f.rawText='[Tesseract]\n'+t;S.ocrF=f;S.ocrSt='done';render()}).catch(function(){if(token!==S.regReadToken)return;S.ocrSt='done';S.ocrF={rawText:'OCR失敗 — 手動入力してください'};render()});
   });
 }
 
