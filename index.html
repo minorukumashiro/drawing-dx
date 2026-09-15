@@ -1044,6 +1044,22 @@ function pushMeta(){
   }
 }
 
+var FB_IMG_MAX_BYTES=950*1024; // ~950KB raw = ~1.27MB base64. Keep below 1MB Firestore limit.
+// 同期済み判定に使うキー。fbPushImages（送信側）と fbPullOneImage（受信側）で
+// 必ず同じ計算を使うこと。片方だけ式が違うと、取得しただけの画像を
+// その端末がそのまま再アップロードし続ける。
+// 末尾の '_c2' は圧縮器の世代。サイズ制限にかかる大きさの画像だけに付けるので、
+// 旧圧縮器で「サムネしか上がらなかった」図面だけが一度だけ再送されて治る。
+function _imgSyncVersion(id){
+  var img=scannedImages[id];
+  var pdf=scannedPdfs[id];
+  var thumb=pdfThumbnails[id];
+  // pdf が boolean true の場合（単体登録PDFの legacy 形式）は length が undefined になる
+  var imgLen=img&&typeof img==='string'?img.length:0;
+  var pdfLen=pdf&&typeof pdf==='string'?pdf.length:0;
+  return imgLen+'_'+pdfLen+'_'+(thumb&&typeof thumb==='string'?thumb.length:0)+(imgLen>=FB_IMG_MAX_BYTES?'_c2':'');
+}
+
 // Push images to Firestore individually (one doc per drawing image)
 // 画像を先にアップロードし、完了後に imgVer を図面に設定する。
 // メタデータ push は呼び出し元（fbPushAll）がこの完了を待ってから行う。
@@ -1060,16 +1076,12 @@ async function fbPushImages(){
   // Track which images have been synced (avoid re-uploading)
   if(!window._fbSyncedImages)window._fbSyncedImages={};
 
-  var MAX_BYTES=950*1024; // ~950KB raw = ~1.27MB base64. Keep below 1MB Firestore limit.
-
   for(var i=0;i<ids.length;i++){
     var id=ids[i];
     var img=scannedImages[id];
     var pdf=scannedPdfs[id];
     var thumb=pdfThumbnails[id];
-    // pdf が boolean true の場合（単体登録PDFの legacy 形式）は length が undefined になるため String() で正規化
-    var pdfLen=pdf&&typeof pdf==='string'?pdf.length:0;
-    var version=(img?img.length:0)+'_'+pdfLen+'_'+(thumb?thumb.length:0);
+    var version=_imgSyncVersion(id);
     if(window._fbSyncedImages[id]===version)continue;
 
     try{
@@ -1077,22 +1089,22 @@ async function fbPushImages(){
 
       // Image: compress as needed to fit MAX_BYTES while keeping high quality
       if(img&&typeof img==='string'){
-        if(img.length<MAX_BYTES){
+        if(img.length<FB_IMG_MAX_BYTES){
           doc.image=img;
         }else{
           // Compress: try high quality first, downscale if needed
-          var compressed=await compressImageForSync(img,MAX_BYTES);
+          var compressed=await compressImageForSync(img,FB_IMG_MAX_BYTES);
           if(compressed)doc.image=compressed;
         }
       }
 
       // PDF: include if fits (string data URL のみ、boolean flag は除外)
-      if(pdf&&typeof pdf==='string'&&pdf.length<MAX_BYTES){
+      if(pdf&&typeof pdf==='string'&&pdf.length<FB_IMG_MAX_BYTES){
         doc.pdf=pdf;
       }
 
       // Thumbnail: always include if available (small)
-      if(thumb&&typeof thumb==='string'&&thumb.length<MAX_BYTES){
+      if(thumb&&typeof thumb==='string'&&thumb.length<FB_IMG_MAX_BYTES){
         doc.thumb=thumb;
       }
 
@@ -1156,22 +1168,32 @@ function compressImageForSync(dataUrl,targetBytes){
       var canvas=document.createElement('canvas');
       var ctx=canvas.getContext('2d');
       var w=img.naturalWidth,hgt=img.naturalHeight;
-      // Try several quality/size combos, picking the best that fits
+      var longEdge=Math.max(w,hgt)||1;
+      // 【重要】以前はここが「元画像に対する倍率」(最小0.35倍)だったため、
+      // 大判スキャン(長辺5000px超など)は最後まで縮めても950KBに収まらず null が返り、
+      // 同期ドキュメントからimageごと落とされてサムネイルだけがクラウドに残っていた。
+      // その結果モバイルで図面を開こうとすると「図面ファイルがありません」になっていた。
+      // 元サイズに依存しないよう「長辺の絶対上限」で刻み、必ずどこかで収まるようにする。
       var attempts=[
-        {scale:1.0,quality:0.92},
-        {scale:1.0,quality:0.85},
-        {scale:0.85,quality:0.88},
-        {scale:0.75,quality:0.85},
-        {scale:0.65,quality:0.82},
-        {scale:0.55,quality:0.80},
-        {scale:0.45,quality:0.78},
-        {scale:0.35,quality:0.75}
+        {max:longEdge,quality:0.92},
+        {max:longEdge,quality:0.85},
+        {max:3000,quality:0.85},
+        {max:2600,quality:0.82},
+        {max:2200,quality:0.80},
+        {max:1900,quality:0.78},
+        {max:1600,quality:0.76},
+        {max:1400,quality:0.72},
+        {max:1200,quality:0.70},
+        {max:1000,quality:0.66},
+        {max:850,quality:0.62},
+        {max:700,quality:0.58}
       ];
       function tryAt(idx){
         if(idx>=attempts.length){resolve(null);return}
         var a=attempts[idx];
-        canvas.width=Math.round(w*a.scale);
-        canvas.height=Math.round(hgt*a.scale);
+        var sc=Math.min(1,a.max/longEdge); // 元より大きくはしない
+        canvas.width=Math.max(1,Math.round(w*sc));
+        canvas.height=Math.max(1,Math.round(hgt*sc));
         ctx.fillStyle='#fff';
         ctx.fillRect(0,0,canvas.width,canvas.height);
         ctx.drawImage(img,0,0,canvas.width,canvas.height);
@@ -1462,10 +1484,12 @@ function _fbAutoPullAddBytes(n){window._fbAutoPullBytes+=(n||0);}
 // 1件分の画像をFirebaseから取得してメモリ(scannedImages等)とIndexedDBへ反映する。
 // fbPullMissingImages（自動の一括先読み）と inject（表示中サムネイルの遅延取得）の両方から使う共通処理。
 window._fbImgFetching=window._fbImgFetching||{}; // 同時に同じidを二重取得しないためのフラグ
-async function fbPullOneImage(id){
+// force=true はユーザーが図面を明示的に開いた時の取得。自動先読みの累計上限
+// (FB_AUTO_PULL_BYTE_CAP)の対象外にして、上限に達した後でも必ず取得できるようにする。
+async function fbPullOneImage(id,force){
   id=String(id);
   if(window._fbImgFetching[id])return false;
-  if(!_fbAutoPullBudgetOk())return false;
+  if(!force&&!_fbAutoPullBudgetOk())return false;
   window._fbImgFetching[id]=true;
   try{
     // ローカルのIndexedDBに既にある画像はネットワークを使わずそちらから読む方が速く、
@@ -1484,7 +1508,7 @@ async function fbPullOneImage(id){
       var localImg=await new Promise(function(res){dbGet('images',id,res);});
       if(localImg){
         scannedImages[id]=localImg;
-        _fbAutoPullAddBytes(localImg.length||0);
+        if(!force)_fbAutoPullAddBytes(localImg.length||0);
         return true;
       }
     }
@@ -1516,8 +1540,8 @@ async function fbPullOneImage(id){
     var fetchedPdf=scannedPdfs[id];
     var fetchedThumb=pdfThumbnails[id];
     var fetchedPdfLen=fetchedPdf&&typeof fetchedPdf==='string'?fetchedPdf.length:0;
-    window._fbSyncedImages[id]=(fetchedImg?fetchedImg.length:0)+'_'+fetchedPdfLen+'_'+(fetchedThumb?fetchedThumb.length:0);
-    _fbAutoPullAddBytes((fetchedImg?fetchedImg.length:0)+fetchedPdfLen+(fetchedThumb?fetchedThumb.length:0));
+    window._fbSyncedImages[id]=_imgSyncVersion(id);
+    if(!force)_fbAutoPullAddBytes((fetchedImg?fetchedImg.length:0)+fetchedPdfLen+(fetchedThumb?fetchedThumb.length:0));
     return true;
   }catch(e){console.warn('Pull failed for',id,':',e.message);return false;}
   finally{delete window._fbImgFetching[id];}
@@ -4798,20 +4822,87 @@ function genInvoice(){
   saveAll(true);render();
 }
 
+// ===== 図面ファイルのオンデマンド取得（表示・ダウンロード共通） =====
+// 「図面ファイルがありません」が出る事故の対策。以前は Firestore の images/<id> を
+// 直接1回だけ見ていたため、
+//   ・登録したPC自身がローカル(IndexedDB)に原本を持っていても見に行かない
+//   ・クラウド側がサイズ制限でサムネイルしか持っていない場合に行き止まりになる
+// という2点でよく失敗していた。ローカル→クラウドの順に探し、最後はサムネイルへ退避する。
+
+// alert/confirm はモーダルなので、直前に消したローディング表示が画面に残ったまま
+// 固まって見える（ブラウザが再描画する前にダイアログで止まるため）。1フレーム描かせてから出す。
+function _afterPaint(fn){
+  if(typeof requestAnimationFrame!=='function'){setTimeout(fn,0);return}
+  requestAnimationFrame(function(){requestAnimationFrame(function(){setTimeout(fn,0)})});
+}
+function _alertLater(msg){_afterPaint(function(){alert(msg)})}
+function _dlSpinner(show){
+  var el=document.getElementById('_dlLoadMsg');
+  if(!show){if(el&&el.parentNode)el.parentNode.removeChild(el);return}
+  if(el)return;
+  el=document.createElement('div');el.id='_dlLoadMsg';
+  el.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;color:#111;padding:20px 28px;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.25);z-index:9999;text-align:center;font-size:14px';
+  el.innerHTML='<div style="margin-bottom:8px">⏳ 図面データを取得中...</div><div style="font-size:11px;color:#666">しばらくお待ちください</div>';
+  document.body.appendChild(el);
+}
+function _hasFullFile(id){return !!(scannedImages[id]||scannedBlobUrls[id]||(typeof scannedPdfs[id]==='string'))}
+// 原本（画像またはPDF実体）をローカル→クラウドの順に探して取り込む。
+// 見つかれば true。サムネイルしか無い／どこにも無い場合は false。
+async function ensureDrawingFile(id){
+  var key=String(id);
+  if(_hasFullFile(id))return true;
+  // 一覧の遅延読み込みなど別経路で同じidを取得中なら、終わるのを待つ（二重取得防止）
+  for(var i=0;i<100&&window._fbImgFetching&&window._fbImgFetching[key];i++){
+    await new Promise(function(r){setTimeout(r,100)});
+  }
+  if(_hasFullFile(id))return true;
+  // 直前に「無い」と確認済みなら連打でクラウドへ問い合わせ直さない。
+  // ただしPC側が後から同期し終える場合があるので60秒で期限切れにする。
+  if(!window._noFullFile)window._noFullFile={};
+  if(window._noFullFile[key]&&(Date.now()-window._noFullFile[key])<60000)return false;
+  await fbPullOneImage(key,true);
+  if(_hasFullFile(id))return true;
+  window._noFullFile[key]=Date.now();
+  return false;
+}
+// 原本が無い時の退避。サムネイルがあるなら行き止まりにせずそれを開く。
+function openThumbFallback(id){
+  var th=pdfThumbnails[id];
+  if(!th)return false; // メッセージは呼び出し側に任せる
+  var d=DRAWINGS.find(function(x){return x.id===id});
+  var mime=(th.match(/^data:([^;]+)/)||[])[1]||'image/png';
+  var ext=mime.indexOf('jpeg')>=0?'jpg':(mime.split('/')[1]||'png');
+  try{toast('原本データが見つからないため、プレビュー画像（低解像度）を開きました');}catch(e){}
+  if(isMobileDevice()){
+    var win=window.open(th,'_blank');
+    if(!win){try{window.location.href=th}catch(e){}}
+  }else{
+    downloadDataURL(th,(d?d.number+'_'+d.name:'drawing'+id)+'_プレビュー.'+ext);
+  }
+  return true;
+}
+
 function openViewer(id){if(isMobileDevice()){openMobileViewer(id);return;}S.viewerId=id;render()}
 function closeViewer(){S.viewerId=null;render()}
 
 var mvPdfDoc=null,mvCurPage=1;
-function openMobileViewer(id){
+function openMobileViewer(id,_retried){
   var hasFile=scannedImages[id]||scannedBlobUrls[id]||scannedPdfs[id]||pdfThumbnails[id];
   if(!hasFile){
-    if(fbEnabled){
-      var lm=document.createElement('div');lm.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;padding:20px 28px;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.25);z-index:9999;text-align:center;font-size:14px';lm.innerHTML='<div style="margin-bottom:8px">⏳ 図面データを取得中...</div><div style="font-size:11px;color:#666">しばらくお待ちください</div>';document.body.appendChild(lm);
-      fbDB.collection('workspaces').doc('default').collection('images').doc(String(id)).get().then(function(snap){
-        if(document.body.contains(lm))document.body.removeChild(lm);
-        if(snap.exists){var data=snap.data();if(data.pdf){scannedPdfs[id]=data.pdf;dbPut('meta','scannedPdfs',scannedPdfs);}if(data.image){scannedImages[id]=data.image;dbPut('images',String(id),data.image);}if(data.thumb){pdfThumbnails[id]=data.thumb;dbPut('meta','pdfThumbs',pdfThumbnails);}openMobileViewer(id);}else{alert('図面ファイルがありません');}
-      }).catch(function(e){if(document.body.contains(lm))document.body.removeChild(lm);alert('取得エラー: '+e.message);});
-    }else{alert('図面ファイルがありません');}
+    // 【重要】以前はここで取得後に無条件で openMobileViewer(id) を再帰呼びしていたため、
+    // ドキュメントは在るが中身(image/pdf/thumb)が空の図面で無限に再取得し続けていた。再取得は一度だけ。
+    if(_retried){
+      _alertLater('図面ファイルが見つかりません。\n（登録したPCからまだ同期されていない可能性があります）');
+      return;
+    }
+    _dlSpinner(true);
+    ensureDrawingFile(id).then(function(){
+      _dlSpinner(false);
+      openMobileViewer(id,true);
+    }).catch(function(e){
+      _dlSpinner(false);
+      _alertLater('取得エラー: '+e.message);
+    });
     return;
   }
   // Build overlay directly in body — outside render() lifecycle so it won't be wiped
@@ -4912,33 +5003,21 @@ function toggleViewerZoom(img){
 
 function downloadDrawingFile(id){
   var d=DRAWINGS.find(function(x){return x.id===id});if(!d)return;
-  var hasFile=scannedImages[id]||scannedBlobUrls[id]||scannedPdfs[id];
-  if(!hasFile){
-    // Firebaseからオンデマンド取得を試みる
-    if(fbEnabled){
-      var loadMsg=document.createElement('div');
-      loadMsg.id='_dlLoadMsg';
-      loadMsg.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;padding:20px 28px;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.25);z-index:9999;text-align:center;font-size:14px';
-      loadMsg.innerHTML='<div style="margin-bottom:8px">⏳ 図面データを取得中...</div><div style="font-size:11px;color:#666">しばらくお待ちください</div>';
-      document.body.appendChild(loadMsg);
-      fbDB.collection('workspaces').doc('default').collection('images').doc(String(id)).get().then(function(snap){
-        document.body.removeChild(loadMsg);
-        if(snap.exists){
-          var data=snap.data();
-          if(data.pdf){scannedPdfs[id]=data.pdf;dbPut('meta','scannedPdfs',scannedPdfs);}
-          if(data.image){scannedImages[id]=data.image;dbPut('images',String(id),data.image);}
-          if(data.thumb){pdfThumbnails[id]=data.thumb;dbPut('meta','pdfThumbs',pdfThumbnails);}
-          var nowHas=scannedImages[id]||scannedPdfs[id];
-          if(nowHas){downloadDrawingFile(id);}
-          else{alert('図面ファイルがありません\n（まだPCから同期されていない可能性があります）');}
-        }else{alert('図面ファイルがありません\n（まだPCから同期されていない可能性があります）');}
-      }).catch(function(e){
-        if(document.body.contains(loadMsg))document.body.removeChild(loadMsg);
-        alert('取得エラー: '+e.message);
-      });
-    }else{
-      alert('図面ファイルがありません');
-    }
+  // サムネイルは「原本」ではないのでここには含めない（含めると低解像度を黙って渡すことになる）
+  if(!_hasFullFile(id)){
+    _dlSpinner(true);
+    // ローカルIndexedDB → Firestore の順に探す。登録したPC自身はローカルに原本を持っているので、
+    // クラウド側がサイズ制限でサムネイルだけになっていてもここで拾える。
+    ensureDrawingFile(id).then(function(ok){
+      _dlSpinner(false);
+      if(ok){downloadDrawingFile(id);return;}
+      if(!openThumbFallback(id)){
+        _alertLater('図面ファイルが見つかりません。\n（登録したPCからまだ同期されていない可能性があります）');
+      }
+    }).catch(function(e){
+      _dlSpinner(false);
+      _alertLater('取得エラー: '+e.message);
+    });
     return;
   }
   var isMobile=/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
@@ -4964,7 +5043,9 @@ function downloadDrawingFile(id){
     }
   }else if(scannedPdfs[id]){
     // PDF flag set but data not available on this device (large PDF, not synced)
-    alert('このPDFデータは登録したPCのみ保存されています。\nPCでQRコードを再生成してください。');
+    if(!openThumbFallback(id)){
+      _alertLater('このPDFの原本は登録したPCにしかありません。\nPCで開いてください。');
+    }
   }else{
     // Image
     var dataUrl=scannedImages[id]||scannedBlobUrls[id];
