@@ -6,6 +6,7 @@
 <title>図面DXプラットフォーム</title>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <!-- jsPDF for exporting drawings as PDF -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -2627,7 +2628,7 @@ function render(){
     
     if(S.bulkItems.length===0){
       // Initial file picker screen
-      h+='<div style="text-align:center;padding:40px 20px;border:2px dashed var(--bd);border-radius:var(--r);background:var(--bg2)"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#999" stroke-width="1.5" style="opacity:.5;margin-bottom:12px"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg><h3 style="margin-bottom:8px;font-size:15px">複数の図面ファイルを選択</h3><p style="font-size:12px;color:var(--tx3);margin-bottom:16px">PDF・画像を複数選択できます（Ctrl/Shift+クリック）</p><button class="btn-ac" style="padding:12px 24px;font-size:13px" onclick="bulkPickFiles()">📁 ファイルを選択</button></div>';
+      h+='<div style="text-align:center;padding:40px 20px;border:2px dashed var(--bd);border-radius:var(--r);background:var(--bg2)"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#999" stroke-width="1.5" style="opacity:.5;margin-bottom:12px"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg><h3 style="margin-bottom:8px;font-size:15px">複数の図面ファイルを選択</h3><p style="font-size:12px;color:var(--tx3);margin-bottom:16px">PDF・画像を複数選択できます（Ctrl/Shift+クリック）。複数ページPDFは1ページずつ分割し「待機」で登録します。</p><button class="btn-ac" style="padding:12px 24px;font-size:13px" onclick="bulkPickFiles()">📁 ファイルを選択</button></div>';
     }else{
       // Preview and edit grid
       var _dupCount=S.bulkItems.filter(function(it){return it.duplicate}).length;
@@ -4034,9 +4035,31 @@ function handleDropSearch(event){
   demoSearch();
 }
 
-function processRegisterFile(f){
+async function processRegisterFile(f){
   if(!f)return;
   var token=S.regReadToken=(S.regReadToken||0)+1;
+  S.regPrev=null;S.regFileObj=null;S.regBlobUrl=null;S.regName='';S.regIsPdf=false;
+  S.ocrSt='idle';S.ocrF={};S.regFileClient='';
+  var dk=detectNonDrawingDoc(f.name);
+  if(dk){render();alert('「'+dk+'」と判断したため、取込対象から除外しました: '+f.name);return;}
+  S.ocrSt='running';S.regPrev=null;S.ocrF={};render();
+  try{
+    var pages=await splitScanPdf(f);
+    if(token!==S.regReadToken)return;
+    if(pages.length>1){
+      closeReg();
+      openBulkRegister();
+      S.bulkItems=pages.map(function(page){return scanBulkItem(page,true)});
+      S.bulkSelected=S.bulkItems.length;
+      render();
+      S.bulkItems.forEach(function(it,idx){bulkLoadPreview(idx)});
+      return;
+    }
+  }catch(err){
+    if(token!==S.regReadToken)return;
+    S.ocrSt='idle';render();
+    alert('PDFの読み込みに失敗しました: '+err.message);return;
+  }
   S.regName=f.name;
   S.regBlobUrl=URL.createObjectURL(f);
   S.regFileObj=f;
@@ -4341,6 +4364,38 @@ async function importAlritZip(e){
 }
 
 // === BULK REGISTER ===
+// ページをコピーして原本の解像度・文字・用紙サイズを保持する。
+// 単票は元のFileを返し、ZIP取込ではこの関数を呼ばない。
+async function splitScanPdf(file){
+  if(file.type!=='application/pdf'&&!/\.pdf$/i.test(file.name))return [file];
+  if(typeof PDFLib==='undefined')throw new Error('PDF分割ライブラリが読み込まれていません。ページを再読み込みしてください。');
+  var src=await PDFLib.PDFDocument.load(await file.arrayBuffer());
+  var count=src.getPageCount();
+  if(!count)throw new Error('PDFにページがありません。');
+  if(count===1)return [file];
+  var pages=[];
+  for(var p=0;p<count;p++){
+    var doc=await PDFLib.PDFDocument.create();
+    var copied=await doc.copyPages(src,[p]);
+    doc.addPage(copied[0]);
+    var bytes=await doc.save();
+    var name=file.name.replace(/\.pdf$/i,'')+'_p'+String(p+1).padStart(String(count).length,'0')+'.pdf';
+    pages.push(new File([bytes],name,{type:'application/pdf',lastModified:file.lastModified}));
+  }
+  return pages;
+}
+
+function scanBulkItem(file,split){
+  var numMatch=file.name.match(/(DWG[-_]?\d+|図番\s*[:：]?\s*([\w\-]+)|[A-Z]{1,3}\d{3,})/i);
+  return {
+    name:file.name,file:file,preview:null,loading:true,checked:true,
+    // 元ファイル名の図番を全ページへ複製せず、登録時に固有番号を割り当てる。
+    number:!split&&numMatch?numMatch[0].replace(/図番\s*[:：]?\s*/,''):'',
+    itemName:file.name.replace(/\.[^.]+$/,''),client:'',mat:'',cat:'',
+    status:'待機',isPdf:file.type==='application/pdf'||/\.pdf$/i.test(file.name)
+  };
+}
+
 function openBulkRegister(){
   S.bulkOpen=true;
   S.bulkItems=[];
@@ -4364,41 +4419,40 @@ function bulkPickFiles(){
   input.type='file';
   input.multiple=true;
   input.accept='application/pdf,image/*';
-  input.onchange=function(e){
+  input.onchange=async function(e){
     var files=Array.from(e.target.files);
     if(files.length===0)return;
+    var target=S.bulkItems;
+    var skipped=[],failed=[];
+    var prog=document.createElement('div');
+    prog.style.cssText='position:fixed;inset:0;background:rgba(255,255,255,.95);z-index:9999;display:grid;place-items:center';
+    document.body.appendChild(prog);
+    var added=[];
+    try{
+      for(var n=0;n<files.length;n++){
+        var f=files[n];
+        var dk=detectNonDrawingDoc(f.name);
+        if(dk){skipped.push({name:f.name,kind:dk});continue;}
+        prog.textContent=(n+1)+' / '+files.length+' — '+f.name+' を読み込み・分割中...';
+        try{
+          var pages=await splitScanPdf(f);
+          pages.forEach(function(page){added.push(scanBulkItem(page,pages.length>1))});
+        }catch(err){failed.push(f.name+': '+err.message);}
+      }
+    }finally{
+      if(document.body.contains(prog))document.body.removeChild(prog);
+    }
+    // 読込中に閉じる・リセットした場合は古い結果を追加しない。
+    if(!S.bulkOpen||S.bulkItems!==target)return;
     var startIdx=S.bulkItems.length;
-    var skipped=[];
-    files.forEach(function(f){
-      var dk=detectNonDrawingDoc(f.name);
-      if(dk){skipped.push({name:f.name,kind:dk});return;}
-      var item={
-        name:f.name,
-        file:f,
-        preview:null,
-        loading:true,
-        checked:true,
-        number:'',
-        itemName:'',
-        client:'',
-        mat:'',
-        cat:'',
-        status:'待機',
-        isPdf:f.type==='application/pdf'||f.name.toLowerCase().endsWith('.pdf')
-      };
-      // Guess drawing number from filename (patterns like DWG-xxxx, numbers)
-      var numMatch=f.name.match(/(DWG[-_]?\d+|図番\s*[:：]?\s*([\w\-]+)|[A-Z]{1,3}\d{3,})/i);
-      if(numMatch)item.number=numMatch[0].replace(/図番\s*[:：]?\s*/,'');
-      // Use filename (without extension) as initial item name hint
-      item.itemName=f.name.replace(/\.[^.]+$/,'');
-      S.bulkItems.push(item);
-    });
+    Array.prototype.push.apply(S.bulkItems,added);
     S.bulkSelected=S.bulkItems.filter(function(i){return i.checked}).length;
     render();
     // Load previews asynchronously
     for(var i=startIdx;i<S.bulkItems.length;i++){
       (function(idx){bulkLoadPreview(idx)})(i);
     }
+    if(failed.length)alert('次のファイルを取り込めませんでした（他のファイルは取り込み済みです）:\n\n'+failed.join('\n'));
     if(skipped.length){
       var byKind={};skipped.forEach(function(s){byKind[s.kind]=(byKind[s.kind]||0)+1;});
       var msg=Object.keys(byKind).map(function(k){return k+' '+byKind[k]+'件'}).join('、');
