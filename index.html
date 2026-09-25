@@ -393,14 +393,159 @@ function dbClear(cb){
   });
 }
 
+// ===== 大きいデータ(PDF原本・サムネイル・書類ファイル)の保存場所 =====
+// 【重要・2026-09-25 スマホ「このページを開けません」6回目】
+// 図面画像は20be34bで1件ずつ(imagesストア)に分けて遅延読み込みにしたが、
+// PDF原本・PDFサムネイル・検査報告書・関連書類の実データは相変わらず metaストアの
+// たった1レコード(scannedPdfs / pdfThumbs / inspections / relatedDocuments)に
+// 全部まとめて入っていた。実測(2026-09-25)で PDF約100MB・サムネイル約115MB・
+// 検査報告書/関連書類約227MB あり、起動時の loadData() がこれを1トランザクションで
+// まとめてメモリへ広げるため、iOS Safariが読み込み直後にタブごと強制終了していた。
+// これらも画像と同じく images ストアへ1件ずつ、キーに種別の接頭辞を付けて保存する。
+//   "<id>"        図面の画像本体(従来どおり)
+//   "pdf:<id>"    PDF原本
+//   "th:<id>"     PDFサムネイル
+//   "insp:<fid>"  検査報告書ファイル
+//   "rdoc:<fid>"  関連書類ファイル
+// 専用ストアを新設するとDB_VERSIONを上げることになり、旧版を開いた別タブで
+// onblocked→localStorageフォールバックが起きるため、既存のimagesストアに同居させる。
+function blobKey(kind,id){return kind+':'+String(id)}
+window._localImageKeys=window._localImageKeys||{}; // 図面画像(接頭辞なし)がこの端末にあるか
+window._localBlobKeys=window._localBlobKeys||{};   // 接頭辞つきキーがこの端末にあるか
+function hasLocalBlob(kind,id){return !!window._localBlobKeys[blobKey(kind,id)]}
+function putLocalBlob(kind,id,val,cb){
+  if(val==null||typeof val!=='string'){if(cb)cb();return}
+  var k=blobKey(kind,id);
+  window._localBlobKeys[k]=true;
+  // 次の saveAll() で同じ内容をもう一度書かないよう、保存済みとして記録しておく
+  window._imgLastPersisted=window._imgLastPersisted||{};
+  window._imgLastPersisted[k]=val;
+  dbPut('images',k,val,cb);
+}
+function getLocalBlob(kind,id,cb){
+  var k=blobKey(kind,id);
+  if(!window._localBlobKeys[k]){cb(null);return}
+  dbGet('images',k,function(v){if(v==null)delete window._localBlobKeys[k];cb(v||null)});
+}
+function delLocalBlob(kind,id){
+  var k=blobKey(kind,id);
+  delete window._localBlobKeys[k];
+  if(window._imgLastPersisted)delete window._imgLastPersisted[k];
+  dbDel('images',k);
+}
+// getAllKeys(軽い)の結果を「図面画像」と「接頭辞つきデータ」に仕分ける。
+// 中身は読まない — どれを持っているかだけ把握し、実データは表示する時に1件ずつ読む。
+function indexLocalKeys(keys){
+  window._localImageKeys={};
+  window._localBlobKeys={};
+  (keys||[]).forEach(function(k){
+    k=String(k);
+    if(k.indexOf(':')>0)window._localBlobKeys[k]=true;
+    else window._localImageKeys[k]=true;
+  });
+}
+// 変化したものだけを1件ずつ書く(前回と同じ値なら書かない)。
+// 【重要】3103696で画像に入れた対策と同じ理由: 毎回まとめて書き直すと、作業日報で
+// プルダウンを選ぶだけの操作でも数十MBぶんのトランザクションが走り、スマホが固まる。
+function _persistOne(kind,id,val){
+  if(typeof val!=='string')return;
+  var k=blobKey(kind,id);
+  window._imgLastPersisted=window._imgLastPersisted||{};
+  if(window._imgLastPersisted[k]===val)return;
+  window._imgLastPersisted[k]=val;
+  window._localBlobKeys[k]=true;
+  dbPut('images',k,val);
+}
+function persistBlobs(){
+  var flags={};
+  Object.keys(scannedPdfs).forEach(function(id){
+    if(typeof scannedPdfs[id]==='string'){_persistOne('pdf',id,scannedPdfs[id]);flags[id]=true;}
+    else if(scannedPdfs[id])flags[id]=true;
+  });
+  // 「この図面はPDF」という印だけの軽いレコード(実データは持たない)。
+  // 起動時はこれだけを読み、PDF本体は表示する時に読む。
+  dbPut('meta','pdfFlags',flags);
+  Object.keys(pdfThumbnails).forEach(function(id){_persistOne('th',id,pdfThumbnails[id])});
+  Object.keys(inspectionReports).forEach(function(did){
+    (inspectionReports[did]||[]).forEach(function(r){if(r&&r.fileId&&r.data)_persistOne('insp',r.fileId,r.data)});
+  });
+  Object.keys(relatedDocuments).forEach(function(did){
+    (relatedDocuments[did]||[]).forEach(function(r){if(r&&r.fileId&&r.data)_persistOne('rdoc',r.fileId,r.data)});
+  });
+}
+
+// 旧レコード(metaに全部入り)から上の方式への移行。
+// 【重要】スマホは旧レコードを「読んだ瞬間」に落ちるので、読まずに捨てる。中身は
+// すべてクラウド(images/<id>のpdf・thumb、workspaces/insp_*・rdoc_*)から必要に
+// なった時に取り直せるので、消えて困るものは無い(クラウドに載らない大きいPDFは
+// PC側で登録されたものなので、PC側に残る)。PCは従来どおり全部載せても動いていた
+// ので、1レコードずつ読み出して分解する。
+var BLOB_SPLIT_VER=1;
+function migrateBlobsOutOfMeta(done){
+  dbGet('meta','_blobSplitVer',function(v){
+    if(v>=BLOB_SPLIT_VER){done();return}
+    if(isMobileDevice()){
+      ['scannedPdfs','pdfThumbs'].forEach(function(k){dbDel('meta',k)});
+      // 検査報告書・関連書類は一覧(名前・日付)ごと捨てる。クラウドの
+      // workspaces/default から同期で戻り、ファイル本体は開いた時に取得する。
+      ['inspections','relatedDocuments'].forEach(function(k){dbDel('meta',k)});
+      dbPut('meta','_blobSplitVer',BLOB_SPLIT_VER,function(){
+        console.log('旧形式のPDF/書類キャッシュを破棄しました(必要になった時にクラウドから取り直します)');
+        done();
+      });
+      return;
+    }
+    var queue=['scannedPdfs','pdfThumbs','inspections','relatedDocuments'];
+    (function next(){
+      if(queue.length===0){dbPut('meta','_blobSplitVer',BLOB_SPLIT_VER,done);return}
+      var key=queue.shift();
+      dbGet('meta',key,function(val){
+        if(!val){next();return}
+        try{
+          if(key==='scannedPdfs'){
+            var flags={};
+            Object.keys(val).forEach(function(id){
+              if(typeof val[id]==='string'){dbPut('images',blobKey('pdf',id),val[id]);flags[id]=true;}
+              else if(val[id])flags[id]=true;
+            });
+            dbPut('meta','pdfFlags',flags);
+            dbDel('meta',key);
+          }else if(key==='pdfThumbs'){
+            Object.keys(val).forEach(function(id){
+              if(typeof val[id]==='string')dbPut('images',blobKey('th',id),val[id]);
+            });
+            dbDel('meta',key);
+          }else{
+            var kind=key==='inspections'?'insp':'rdoc';
+            var meta={};
+            Object.keys(val).forEach(function(did){
+              meta[did]=(val[did]||[]).map(function(r){
+                if(r&&r.fileId&&typeof r.data==='string')dbPut('images',blobKey(kind,r.fileId),r.data);
+                return {name:r.name,date:r.date,type:r.type,fileId:r.fileId||'',url:r.url||''};
+              });
+            });
+            dbPut('meta',key,meta); // 一覧(名前・日付)だけmetaに残す
+          }
+        }catch(e){console.warn('保存形式の移行に失敗:',key,e.message)}
+        val=null;
+        setTimeout(next,0); // 1レコードずつ。まとめて抱え込まない
+      });
+    })();
+  });
+}
+
 function loadData(){
   // Try IndexedDB first, fall back to localStorage migration
   openDB(function(db){
     if(db){
+      migrateBlobsOutOfMeta(function(){
       var tx=db.transaction('meta','readonly');
       var store=tx.objectStore('meta');
       var reqs={};
-      ['drawings','invoices','scannedPdfs','pdfThumbs','nextId','masters','serverUrl','inspections','relatedFiles','relatedDocuments','annotations','deliveries','worklogs','trash'].forEach(function(k){
+      // 【重要】'scannedPdfs'・'pdfThumbs' はここで読まない。1件ずつ images ストアへ
+      // 分けて保存しており(blobKey参照)、実データは表示する時に読む。ここで読むと
+      // 数百MBが一度にメモリへ載り、スマホがタブごと落ちる。
+      ['drawings','invoices','pdfFlags','nextId','masters','serverUrl','inspections','relatedFiles','relatedDocuments','annotations','deliveries','worklogs','trash'].forEach(function(k){
         reqs[k]=store.get(k);
       });
       tx.oncomplete=function(){
@@ -416,9 +561,13 @@ function loadData(){
         if(reqs.deliveries.result)DELIVERIES=reqs.deliveries.result;
         if(reqs.worklogs.result)WORKLOGS=reqs.worklogs.result;
         if(reqs.trash.result)TRASH=reqs.trash.result;
-        scannedPdfs=reqs.scannedPdfs.result||{};
-        pdfThumbnails=reqs.pdfThumbs.result||{};
-        inspectionReports=reqs.inspections.result||{};
+        // PDF原本とサムネイルの実データは遅延読み込み。ここでは「この図面はPDF」という
+        // 印(pdfFlags、値が true だけの軽いレコード)のみを読む。
+        scannedPdfs=reqs.pdfFlags.result||{};
+        pdfThumbnails={};
+        // 旧形式の破棄直後(スマホ)はこのレコードが無い。その場合は dxp_fbCache から
+        // 読み込んだ一覧を残す(同期が来るまでの表示用)。
+        if(reqs.inspections.result)inspectionReports=reqs.inspections.result;
         if(reqs.relatedFiles.result)relatedFiles=reqs.relatedFiles.result;
         if(reqs.relatedDocuments.result)relatedDocuments=reqs.relatedDocuments.result;
         migrateRelatedFilesToDocs();
@@ -446,8 +595,7 @@ if(reqs.annotations.result)ANNOTATIONS=reqs.annotations.result;
         var imgStore=imgTx.objectStore('images');
         var keyReq=imgStore.getAllKeys();
         imgTx.oncomplete=function(){
-          window._localImageKeys={};
-          (keyReq.result||[]).forEach(function(k){window._localImageKeys[String(k)]=true;});
+          indexLocalKeys(keyReq.result);
           // IndexedDBに画像が1件も無い(ごく古いlocalStorageのみのデータ)場合だけ移行する
           if((keyReq.result||[]).length===0){
             migrateFromLocalStorage();
@@ -455,6 +603,7 @@ if(reqs.annotations.result)ANNOTATIONS=reqs.annotations.result;
           }
         };
       };
+      });
     }else{
       loadFromLocalStorage();
       if(MASTERS.statuses&&MASTERS.statuses.indexOf('その他')<0)MASTERS.statuses.push('その他');if(MASTERS.statuses&&MASTERS.statuses.indexOf('完了')<0){var ni=MASTERS.statuses.indexOf('納品済');if(ni>=0)MASTERS.statuses.splice(ni,0,'完了');else MASTERS.statuses.push('完了');}if(MASTERS.statuses&&MASTERS.statuses.indexOf('待機')<0)MASTERS.statuses.unshift('待機');
@@ -479,7 +628,15 @@ function loadAllLocalImagesIntoMemory(cb){
     var valReq=store.getAll();
     tx.oncomplete=function(){
       var keys=keyReq.result||[],vals=valReq.result||[];
-      keys.forEach(function(k,i){if(vals[i]!=null)scannedImages[k]=vals[i];});
+      keys.forEach(function(k,i){
+        var v=vals[i];if(v==null)return;
+        k=String(k);
+        // 接頭辞つきキー(pdf:/th:/insp:/rdoc:)は種類ごとに戻す。検査報告書・関連書類は
+        // バックアップ対象に含めていないので、ここではPDF関係だけメモリへ載せる。
+        if(k.indexOf('pdf:')===0)scannedPdfs[k.slice(4)]=v;
+        else if(k.indexOf('th:')===0)pdfThumbnails[k.slice(3)]=v;
+        else if(k.indexOf(':')<0)scannedImages[k]=v;
+      });
       cb();
     };
   });
@@ -561,8 +718,8 @@ function saveLocalOnly(){
   dbPut('meta','invoices',INVOICES);
   dbPut('meta','deliveries',DELIVERIES);
   dbPut('meta','masters',MASTERS);
-  dbPut('meta','inspections',inspectionReports);
-  dbPut('meta','relatedDocuments',relatedDocuments);
+  dbPut('meta','inspections',inspMeta());
+  dbPut('meta','relatedDocuments',relDocMeta());
   dbPut('meta','annotations',ANNOTATIONS);
   dbPut('meta','worklogs',WORKLOGS);
   dbPut('meta','trash',TRASH);
@@ -575,13 +732,15 @@ function saveAll(skipImages){
   dbPut('meta','invoices',INVOICES);
   dbPut('meta','deliveries',DELIVERIES);
   try{localStorage.setItem('dxp_deliveries',JSON.stringify(DELIVERIES));}catch(e){}
-  dbPut('meta','scannedPdfs',scannedPdfs);
-  dbPut('meta','pdfThumbs',pdfThumbnails);
   dbPut('meta','nextId',nextId);
   dbPut('meta','masters',MASTERS);
-  dbPut('meta','inspections',inspectionReports);
   dbPut('meta','relatedFiles',relatedFiles);
-  dbPut('meta','relatedDocuments',relatedDocuments);
+  // 【重要・2026-09-25】PDF原本・サムネイル・検査報告書・関連書類の実データを
+  // metaの1レコードへ丸ごと入れていたのがスマホOOM(6回目)の原因。metaには一覧
+  // (名前・日付・fileId)だけを保存し、実データは変化したものだけ1件ずつ書く。
+  dbPut('meta','inspections',inspMeta());
+  dbPut('meta','relatedDocuments',relDocMeta());
+  persistBlobs();
   dbPut('meta','annotations',ANNOTATIONS);
   dbPut('meta','worklogs',WORKLOGS);
   dbPut('meta','trash',TRASH);
@@ -623,7 +782,7 @@ function deduplicateRelatedDocs(){
     relatedDocuments[drawingId]=deduped;
     if(deduped.length===0)delete relatedDocuments[drawingId];
   });
-  if(changed)dbPut('meta','relatedDocuments',relatedDocuments);
+  if(changed)dbPut('meta','relatedDocuments',relDocMeta());
   return changed;
 }
 function deduplicateInspections(){
@@ -654,7 +813,7 @@ function deduplicateInspections(){
 //   ・自分が削除した項目だけを消す（他端末が追加したものは消さない）
 // 書き込みはトランザクション内で「読み直し→マージ→書き込み」するため、
 // 送信直前に他端末が入れた変更も失われない。
-var APP_VER='20260827a'; // 書き込みに埋める版数。古い版のまま動いている端末の特定に使う。
+var APP_VER='20260925a'; // 書き込みに埋める版数。古い版のまま動いている端末の特定に使う。
 var fbBase=null; // マージの基準（最後にサーバーから受け取った状態のコピー）
 // 【重要】Firestore はオブジェクトのキーの並び順を保持しない（読むたびに順序が変わる）。
 // 素の JSON.stringify で比較すると「値は同じなのに違う」と誤判定し、端末同士が
@@ -1061,6 +1220,22 @@ function _imgSyncVersion(id){
   return imgLen+'_'+pdfLen+'_'+(thumb&&typeof thumb==='string'?thumb.length:0)+(imgLen>=FB_IMG_MAX_BYTES?'_c2':'');
 }
 
+// 【重要・2026-09-25】画像・PDF原本・サムネイルは遅延読み込みなので、メモリには
+// 一部しか載っていないことが普通になった。この状態で set() すると、クラウドの
+// ドキュメントは丸ごと差し替わるため、載っていないフィールド(例: サムネイルだけ
+// 未読み込み)がクラウドから消えてしまう。前回同期した版と比べて「あったはずのものが
+// 今は無い」場合は、消したのではなく読み込んでいないだけなので送らない。
+function _imgPushWouldLose(id){
+  var prev=window._fbSyncedImages&&window._fbSyncedImages[id];
+  if(!prev)return false;
+  var p=String(prev).split('_');
+  var have=[scannedImages[id],scannedPdfs[id],pdfThumbnails[id]];
+  for(var i=0;i<3;i++){
+    if((+p[i]||0)>0&&!(typeof have[i]==='string'&&have[i].length))return true;
+  }
+  return false;
+}
+
 // Push images to Firestore individually (one doc per drawing image)
 // 画像を先にアップロードし、完了後に imgVer を図面に設定する。
 // メタデータ push は呼び出し元（fbPushAll）がこの完了を待ってから行う。
@@ -1084,6 +1259,7 @@ async function fbPushImages(){
     var thumb=pdfThumbnails[id];
     var version=_imgSyncVersion(id);
     if(window._fbSyncedImages[id]===version)continue;
+    if(_imgPushWouldLose(id))continue; // 未読み込みなだけ。送るとクラウド側が欠ける
 
     try{
       var doc={updated:Date.now()};
@@ -1416,8 +1592,9 @@ function fbStartListener(){
     dbPut('meta','drawings',DRAWINGS);
     dbPut('meta','deliveries',DELIVERIES);
     dbPut('meta','masters',MASTERS);
-    dbPut('meta','inspections',inspectionReports);
-    dbPut('meta','relatedDocuments',relatedDocuments);
+    // 一覧(名前・日付)だけを保存する。実データはファイルごとにimagesストアへ(blobKey参照)
+    dbPut('meta','inspections',inspMeta());
+    dbPut('meta','relatedDocuments',relDocMeta());
     dbPut('meta','invoices',INVOICES);
     dbPut('meta','annotations',ANNOTATIONS);
     dbPut('meta','worklogs',WORKLOGS);
@@ -1469,13 +1646,16 @@ function fbStartListener(){
 // ユーザーが図面や書類を明示的に開いたときの個別取得(openMobileViewer・downloadDrawingFile・
 // 後述のviewInspection/viewRelatedDocのオンデマンド取得)はこの上限の対象外＝常に動く。
 var FB_AUTO_PULL_BYTE_CAP=100*1024*1024; // 約100MB(base64文字数ベース。実メモリはこれより大きくなりうるので余裕を見て低めに設定)
+// スマホはタブに使えるメモリがPCよりずっと小さく、100MBまで貯めると落ちる。
+var FB_AUTO_PULL_BYTE_CAP_MOBILE=35*1024*1024;
+function _fbAutoPullCap(){return isMobileDevice()?FB_AUTO_PULL_BYTE_CAP_MOBILE:FB_AUTO_PULL_BYTE_CAP}
 window._fbAutoPullBytes=window._fbAutoPullBytes||0;
 window._fbAutoPullCapHit=false;
 function _fbAutoPullBudgetOk(){
-  if(window._fbAutoPullBytes<FB_AUTO_PULL_BYTE_CAP)return true;
+  if(window._fbAutoPullBytes<_fbAutoPullCap())return true;
   if(!window._fbAutoPullCapHit){
     window._fbAutoPullCapHit=true;
-    console.warn('自動先読みの累計サイズが上限('+Math.round(FB_AUTO_PULL_BYTE_CAP/1024/1024)+'MB)に達したため自動読み込みを停止しました。以後は図面・書類を開いたときに個別取得します。');
+    console.warn('自動先読みの累計サイズが上限('+Math.round(_fbAutoPullCap()/1024/1024)+'MB)に達したため自動読み込みを停止しました。以後は図面・書類を開いたときに個別取得します。');
     try{toast('画像・書類が多いため自動読み込みを一時停止しました。図面を開くと個別に読み込みます。');}catch(e){}
   }
   return false;
@@ -1516,13 +1696,24 @@ async function fbPullOneImage(id,force){
     // 場合はローカルを信用する。
     var dForVer=DRAWINGS.find(function(x){return String(x.id)===id});
     var localMaybeStale=dForVer&&dForVer.imgVer&&_localImgVer[id]&&(dForVer.imgVer>_localImgVer[id]);
-    if(window._localImageKeys&&window._localImageKeys[id]&&!localMaybeStale){
-      var localImg=await new Promise(function(res){dbGet('images',id,res);});
-      if(localImg){
-        scannedImages[id]=localImg;
-        if(!force)_fbAutoPullAddBytes(localImg.length||0);
-        return true;
+    if(!localMaybeStale){
+      var gotLocal=false;
+      if(window._localImageKeys&&window._localImageKeys[id]){
+        var localImg=await new Promise(function(res){dbGet('images',id,res);});
+        if(localImg){scannedImages[id]=localImg;if(!force)_fbAutoPullAddBytes(localImg.length||0);gotLocal=true;}
       }
+      // PDFサムネイル・PDF原本も画像と同じく1件ずつローカルに分けて持っている(2026-09-25)
+      if(hasLocalBlob('th',id)){
+        var localThumb=await new Promise(function(res){getLocalBlob('th',id,res);});
+        if(localThumb){pdfThumbnails[id]=localThumb;if(!force)_fbAutoPullAddBytes(localThumb.length||0);gotLocal=true;}
+      }
+      if(hasLocalBlob('pdf',id)){
+        var localPdf=await new Promise(function(res){getLocalBlob('pdf',id,res);});
+        if(localPdf){scannedPdfs[id]=localPdf;if(!force)_fbAutoPullAddBytes(localPdf.length||0);gotLocal=true;}
+      }
+      // ユーザーが図面を開いた時(force)は、サムネイルだけ見つかって終わりにすると
+      // 「図面ファイルがありません」に逆戻りするので、原本が揃った時だけ打ち切る。
+      if(gotLocal&&(!force||_hasFullFile(id)))return true;
     }
     if(!fbEnabled){_markImgMissing(id);return false;}
     var snap=await fbDB.collection('workspaces').doc('default').collection('images').doc(id).get();
@@ -1536,11 +1727,11 @@ async function fbPullOneImage(id,force){
     }
     if(data.pdf){
       scannedPdfs[id]=data.pdf;
-      dbPut('meta','scannedPdfs',scannedPdfs);
+      putLocalBlob('pdf',id,data.pdf);
     }
     if(data.thumb){
       pdfThumbnails[id]=data.thumb;
-      dbPut('meta','pdfThumbs',pdfThumbnails);
+      putLocalBlob('th',id,data.thumb);
     }
     // ローカルの imgVer を更新して次回の不要な再取得を防ぐ
     if(dForVer&&dForVer.imgVer){
@@ -1617,7 +1808,7 @@ async function fbPullMissingImages(){
     var id=d.id;
     // ローカル(IndexedDB)に既にある画像は、ここでの先読み対象にしない。実際に表示される時に
     // inject()経由でローカルから即座に読めるため、起動時にわざわざFirestoreへ取りに行く必要が無い。
-    var localHasImage=scannedImages[id]||scannedPdfs[id]||(window._localImageKeys&&window._localImageKeys[String(id)]);
+    var localHasImage=scannedImages[id]||typeof scannedPdfs[id]==='string'||(window._localImageKeys&&window._localImageKeys[String(id)])||hasLocalBlob('th',id)||hasLocalBlob('pdf',id);
     // 【重要】_localImgVerは「過去にFirestoreへ確認して分かっているimgVer」だけを記録するため、
     // この端末で登録して一度もFirestore確認していない画像は未設定のまま。以前は||0でフォールバック
     // していたため、そういう画像も常に「古いかもしれない」扱いになり、ローカルにあるのに毎回
@@ -1693,6 +1884,8 @@ function updateSyncStatus(state,msg){
 
 function deleteImageStorage(id){
   dbDel('images',String(id));
+  delLocalBlob('pdf',id);
+  delLocalBlob('th',id);
 }
 function resetAllData(){
   if(!confirm('全データを初期状態にリセットしますか？\n図面・画像・設定がすべて消えます。'))return;
@@ -1748,6 +1941,7 @@ function forceRestoreFromFirebase(){
   fbBase=null; // サーバーの内容をそのまま採用し直す
   dbClear(function(){
     DRAWINGS=[];INVOICES=[];WORKLOGS=[];scannedImages={};scannedPdfs={};pdfThumbnails={};
+    window._localImageKeys={};window._localBlobKeys={};window._imgLastPersisted={};
     render();
     fbStartListener();
     alert('Firebaseから再取得中です。\n数秒後にデータが表示されます。');
@@ -2012,7 +2206,10 @@ function allocDrawingId(){
   DRAWINGS.forEach(function(d){var n=Number(d.id)||0;if(n>maxId)maxId=n;});
   if(!(nextId>maxId))nextId=maxId+1;
   var used={};DRAWINGS.forEach(function(d){used[String(d.id)]=true;});
-  while(used[String(nextId)]||scannedImages[nextId]||scannedPdfs[nextId]||pdfThumbnails[nextId])nextId++;
+  // 画像・PDFは遅延読み込みでメモリに無いことがあるので、ローカルのキー表も必ず見る
+  while(used[String(nextId)]||scannedImages[nextId]||scannedPdfs[nextId]||pdfThumbnails[nextId]
+    ||(window._localImageKeys&&window._localImageKeys[String(nextId)])
+    ||hasLocalBlob('pdf',nextId)||hasLocalBlob('th',nextId))nextId++;
   return nextId++;
 }
 // カテゴリは自動登録・手動登録(saveDwg)では設定されないので undefined になりうる。
@@ -2815,11 +3012,21 @@ function inject(){setTimeout(function(){
     // scannedImages（旧形式でPDFデータが入る場合）優先、無ければ生PDF（scannedPdfs）から描画
     var pdfSrc=scannedImages[id]||(typeof scannedPdfs[id]==='string'?scannedPdfs[id]:null);
     if(!pdfSrc)return;
+    if(window._pdfThumbRendering&&window._pdfThumbRendering[id])return;
+    if(!window._pdfThumbRendering)window._pdfThumbRendering={};
+    window._pdfThumbRendering[id]=true;
     renderPdfThumbnail(id,pdfSrc,function(thumbUrl){
+      delete window._pdfThumbRendering[id];
       if(thumbUrl){
         pdfThumbnails[id]=thumbUrl;
-        saveAll();
-        render(); // re-render to show the thumbnail
+        // 【重要】以前はここで1件ごとに saveAll()+render() を呼んでいた。render()のたびに
+        // inject()が走って未生成ぶんのPDFを再びpdf.jsで開き直すため、複数のPDFが
+        // 未生成だとドキュメントとキャンバスが何重にも積み上がってメモリを食っていた。
+        // サムネイルは1件ずつ保存し、クラウドへの送信はまとめて1回にする。
+        _persistOne('th',id,thumbUrl);
+        clearTimeout(window._thumbSaveTimer);
+        window._thumbSaveTimer=setTimeout(function(){saveAll();},1500);
+        deferredRender();
       }
     });
   });
@@ -2842,8 +3049,11 @@ function renderPdfThumbnail(id,dataUrl,callback){
       var cv=document.createElement('canvas');
       cv.width=sv.width;cv.height=sv.height;
       var ctx=cv.getContext('2d');
+      ctx.fillStyle='#fff';ctx.fillRect(0,0,cv.width,cv.height); // JPEGは透明を扱えないので下地を白に
       return page.render({canvasContext:ctx,viewport:sv}).promise.then(function(){
-        var thumbUrl=cv.toDataURL('image/png',0.8);
+        // 【重要】PNGだと1枚あたり90KB前後になり、全件ぶんで100MBを超えてスマホが
+        // 落ちる一因になっていた。サムネイルはJPEGにする(1枚15KB程度)。
+        var thumbUrl=cv.toDataURL('image/jpeg',0.72);
         if(callback)callback(thumbUrl);
       });
     }).catch(function(){if(callback)callback(null)});
@@ -5262,14 +5472,20 @@ function compressImage(dataUrl,cb,targetBytes){
 // 並列fetchすると、対象が多い端末(現状219件)でメモリ/同時接続を圧迫する。
 // 1回の呼び出しでは少数だけ処理し、残りは次のsnapshot受信時の再呼び出しで徐々に揃える。
 var FB_INSP_RDOC_BATCH=20;
+// 【重要・2026-09-25】スマホではファイル本体の先読みを一切しない。1件平均276KB・
+// 全841件で約227MBあり、少しずつでも貯め込むとタブごと落ちる。表示する時に
+// viewInspection/viewRelatedDoc が1件だけ取りに行くので、先読みは不要。
 function fbLoadInspectionFiles(){
   if(!fbEnabled)return;
-  if(!_fbAutoPullBudgetOk())return; // 累計サイズ上限(FB_AUTO_PULL_BYTE_CAP)に達していたら自動取得は行わない。個別のvia viewInspectionは対象外
+  if(isMobileDevice())return;
+  if(!_fbAutoPullBudgetOk())return; // 累計サイズ上限に達していたら自動取得は行わない。viewInspectionからの個別取得は対象外
   var toFetch=[],toBackup=[];
   Object.keys(inspectionReports).forEach(function(drawingId){
     (inspectionReports[drawingId]||[]).forEach(function(r){
       if(!r.fileId)return;
-      if(!r.data)toFetch.push(r);else toBackup.push({drawingId:drawingId,r:r});
+      // ローカルに実データを持っているか(メモリ or imagesストア)で振り分ける
+      if(r.data||hasLocalBlob('insp',r.fileId))toBackup.push({drawingId:drawingId,r:r});
+      else toFetch.push(r);
     });
   });
   toFetch.slice(0,FB_INSP_RDOC_BATCH).forEach(function(r){
@@ -5278,25 +5494,29 @@ function fbLoadInspectionFiles(){
       if(doc.exists){
         r.data=doc.data().data;
         _fbAutoPullAddBytes(r.data?r.data.length:0);
-        dbPut('meta','inspections',inspectionReports);
+        putLocalBlob('insp',r.fileId,r.data);
         deferredRender();
       }
     }).catch(function(e){console.warn('insp load failed:',e.message);});
   });
   toBackup.slice(0,FB_INSP_RDOC_BATCH).forEach(function(o){
-    var drawingId=o.drawingId,r=o.r;
+    var r=o.r;
     // ローカルにデータあり → Firestoreに存在しない場合は再アップロード（ルール期限切れ中の未保存分を救済）
     fbDB.collection('workspaces').doc('insp_'+r.fileId).get().then(function(doc){
-      if(!doc.exists){
-        var entry=inspectionReports[drawingId]&&inspectionReports[drawingId].find(function(x){return x.fileId===r.fileId;});
-        if(entry&&entry.data){
-          fbDB.collection('workspaces').doc('insp_'+r.fileId).set({
-            drawingId:+drawingId,name:entry.name,date:entry.date,type:entry.type,data:entry.data
-          }).catch(function(e){console.warn('insp backup failed:',e.message);try{toast('⚠ 検査報告書ファイルのクラウド保存に失敗（この端末にのみ保存されています）');}catch(_){}});
-        }
-      }
+      if(doc.exists)return;
+      _localDocData('insp',r,function(data){
+        if(!data)return;
+        fbDB.collection('workspaces').doc('insp_'+r.fileId).set({
+          drawingId:+o.drawingId,name:r.name,date:r.date,type:r.type,data:data
+        }).catch(function(e){console.warn('insp backup failed:',e.message);try{toast('⚠ 検査報告書ファイルのクラウド保存に失敗（この端末にのみ保存されています）');}catch(_){}});
+      });
     }).catch(function(e){console.warn('insp check failed:',e.message);});
   });
+}
+// メモリに無ければ images ストアから1件だけ読む（全件をメモリへ広げない）
+function _localDocData(kind,r,cb){
+  if(r.data){cb(r.data);return}
+  getLocalBlob(kind,r.fileId,cb);
 }
 // 検査報告書(kind='insp')と関連書類(kind='rdoc')の共通取り込み処理。
 // ファイル選択(uploadXxx)からもカメラ撮影(cameraXxx)からも同じ経路を通す。
@@ -5404,11 +5624,22 @@ function _docViewerHtml(safeName,type,src){
 // 自動先読み(fbLoadInspectionFiles/fbLoadRelatedDocFiles)は累計サイズ上限に達すると
 // 未取得のまま止まることがある。「表示」を明示的にタップされたときは、その1件だけを
 // 上限を無視して個別取得する(ユーザーが今まさに見たいものなので、自動先読みとは別枠で許可する)。
+// 検査報告書・関連書類のファイル本体。metaの一覧には実データを持たせていないので、
+// 開いた時にローカル(images:"insp:<fid>"/"rdoc:<fid>")→クラウドの順で探す。
 function _fetchDocDataOnDemand(prefix,fileId){
-  if(!fbEnabled||!fileId)return Promise.resolve(null);
-  return fbDB.collection('workspaces').doc(prefix+fileId).get().then(function(doc){
-    return doc.exists?(doc.data().data||null):null;
-  }).catch(function(){return null;});
+  if(!fileId)return Promise.resolve(null);
+  var kind=prefix==='insp_'?'insp':'rdoc';
+  return new Promise(function(resolve){
+    getLocalBlob(kind,fileId,function(local){
+      if(local){resolve(local);return}
+      if(!fbEnabled){resolve(null);return}
+      fbDB.collection('workspaces').doc(prefix+fileId).get().then(function(doc){
+        var data=doc.exists?(doc.data().data||null):null;
+        if(data)putLocalBlob(kind,fileId,data); // 次からはローカルから開ける
+        resolve(data);
+      }).catch(function(){resolve(null)});
+    });
+  });
 }
 function viewInspection(drawingId,idx){
   var r=inspectionReports[drawingId]&&inspectionReports[drawingId][idx];
@@ -5422,7 +5653,6 @@ function viewInspection(drawingId,idx){
   _fetchDocDataOnDemand('insp_',r.fileId).then(function(data){
     if(!data){w.close();alert('ファイルデータが見つかりません。\n一度削除してから再度アップロードしてください。');return;}
     r.data=data;
-    dbPut('meta','inspections',inspectionReports);
     w.document.open();w.document.write(_docViewerHtml(safeName,r.type,data));w.document.close();
   });
 }
@@ -5430,6 +5660,8 @@ function viewInspection(drawingId,idx){
 function delInspection(drawingId,idx){
   if(!confirm('この検査報告書を削除しますか？'))return;
   if(inspectionReports[drawingId]){
+    var _gone=inspectionReports[drawingId][idx];
+    if(_gone&&_gone.fileId)delLocalBlob('insp',_gone.fileId); // ローカルの実体も消す(残すと端末に溜まり続ける)
     inspectionReports[drawingId].splice(idx,1);
     if(inspectionReports[drawingId].length===0)delete inspectionReports[drawingId];
     saveAll();
@@ -5439,12 +5671,14 @@ function delInspection(drawingId,idx){
 
 function fbLoadRelatedDocFiles(){
   if(!fbEnabled)return;
-  if(!_fbAutoPullBudgetOk())return; // 累計サイズ上限(FB_AUTO_PULL_BYTE_CAP)に達していたら自動取得は行わない。個別のviewRelatedDocは対象外
+  if(isMobileDevice())return; // fbLoadInspectionFiles と同じ理由。開いた時に1件だけ取る
+  if(!_fbAutoPullBudgetOk())return; // 累計サイズ上限に達していたら自動取得は行わない。viewRelatedDocからの個別取得は対象外
   var toFetch=[],toBackup=[];
   Object.keys(relatedDocuments).forEach(function(drawingId){
     (relatedDocuments[drawingId]||[]).forEach(function(r){
       if(!r.fileId)return;
-      if(!r.data)toFetch.push(r);else toBackup.push({drawingId:drawingId,r:r});
+      if(r.data||hasLocalBlob('rdoc',r.fileId))toBackup.push({drawingId:drawingId,r:r});
+      else toFetch.push(r);
     });
   });
   toFetch.slice(0,FB_INSP_RDOC_BATCH).forEach(function(r){
@@ -5452,22 +5686,21 @@ function fbLoadRelatedDocFiles(){
       if(doc.exists){
         r.data=doc.data().data;
         _fbAutoPullAddBytes(r.data?r.data.length:0);
-        dbPut('meta','relatedDocuments',relatedDocuments);
+        putLocalBlob('rdoc',r.fileId,r.data);
         deferredRender();
       }
     }).catch(function(e){console.warn('rdoc load failed:',e.message);});
   });
   toBackup.slice(0,FB_INSP_RDOC_BATCH).forEach(function(o){
-    var drawingId=o.drawingId,r=o.r;
+    var r=o.r;
     fbDB.collection('workspaces').doc('rdoc_'+r.fileId).get().then(function(doc){
-      if(!doc.exists){
-        var entry=relatedDocuments[drawingId]&&relatedDocuments[drawingId].find(function(x){return x.fileId===r.fileId;});
-        if(entry&&entry.data){
-          fbDB.collection('workspaces').doc('rdoc_'+r.fileId).set({
-            drawingId:+drawingId,name:entry.name,date:entry.date,type:entry.type,data:entry.data
-          }).catch(function(e){console.warn('rdoc backup failed:',e.message);try{toast('⚠ 関連書類ファイルのクラウド保存に失敗（この端末にのみ保存されています）');}catch(_){}});
-        }
-      }
+      if(doc.exists)return;
+      _localDocData('rdoc',r,function(data){
+        if(!data)return;
+        fbDB.collection('workspaces').doc('rdoc_'+r.fileId).set({
+          drawingId:+o.drawingId,name:r.name,date:r.date,type:r.type,data:data
+        }).catch(function(e){console.warn('rdoc backup failed:',e.message);try{toast('⚠ 関連書類ファイルのクラウド保存に失敗（この端末にのみ保存されています）');}catch(_){}});
+      });
     }).catch(function(e){console.warn('rdoc check failed:',e.message);});
   });
 }
@@ -5490,13 +5723,14 @@ function viewRelatedDoc(drawingId,idx){
   _fetchDocDataOnDemand('rdoc_',r.fileId).then(function(data){
     if(!data){w.close();alert('ファイルデータが見つかりません。\n一度削除してから再度アップロードしてください。');return;}
     r.data=data;
-    dbPut('meta','relatedDocuments',relatedDocuments);
     w.document.open();w.document.write(_docViewerHtml(safeName,r.type,data));w.document.close();
   });
 }
 function delRelatedDoc(drawingId,idx){
   if(!confirm('この関連書類を削除しますか？'))return;
   if(relatedDocuments[drawingId]){
+    var _gone=relatedDocuments[drawingId][idx];
+    if(_gone&&_gone.fileId)delLocalBlob('rdoc',_gone.fileId); // ローカルの実体も消す
     relatedDocuments[drawingId].splice(idx,1);
     if(relatedDocuments[drawingId].length===0)delete relatedDocuments[drawingId];
     saveAll();render();
@@ -5599,6 +5833,10 @@ function reuploadImage(id){
       }else{
         delete scannedPdfs[id];
         delete pdfThumbnails[id];
+        delLocalBlob('pdf',id);delLocalBlob('th',id);
+        // 意図的にPDF・サムネイルを外したので、前回の同期内容の記録も消す
+        // （残っていると _imgPushWouldLose が「未読み込み」と誤判定して送信しない）
+        if(window._fbSyncedImages)delete window._fbSyncedImages[id];
         scannedBlobUrls[id]=URL.createObjectURL(f);
         saveAll();render();
         alert('図面画像を更新しました: '+d.number+' '+d.name);
