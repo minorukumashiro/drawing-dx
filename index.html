@@ -813,7 +813,7 @@ function deduplicateInspections(){
 //   ・自分が削除した項目だけを消す（他端末が追加したものは消さない）
 // 書き込みはトランザクション内で「読み直し→マージ→書き込み」するため、
 // 送信直前に他端末が入れた変更も失われない。
-var APP_VER='20260925a'; // 書き込みに埋める版数。古い版のまま動いている端末の特定に使う。
+var APP_VER='20260926a'; // 書き込みに埋める版数。古い版のまま動いている端末の特定に使う。
 var fbBase=null; // マージの基準（最後にサーバーから受け取った状態のコピー）
 // 【重要】Firestore はオブジェクトのキーの並び順を保持しない（読むたびに順序が変わる）。
 // 素の JSON.stringify で比較すると「値は同じなのに違う」と誤判定し、端末同士が
@@ -1420,6 +1420,7 @@ function fbStartListener(){
     window._fbLastSnapAt=Date.now();
     window._fbSnapCount=(window._fbSnapCount||0)+1;
     window._fbListenRetry=0; // 受信できたので再接続の待ち時間をリセット
+    window._fbListenPending=false;
     checkWatcherHealth();
     if(!doc.exists)return;
     var data=doc.data();
@@ -1629,13 +1630,33 @@ function fbStartListener(){
     window._fbListenRetry=(window._fbListenRetry||0)+1;
     var wait=Math.min(30000,1000*Math.pow(2,Math.min(5,window._fbListenRetry)));
     clearTimeout(window._fbListenTimer);
+    window._fbListenPending=true; // 再接続待ち中（復帰イベントで待ち時間を飛ばすための目印）
     window._fbListenTimer=setTimeout(function(){
+      window._fbListenPending=false;
       syncLog('受信を再接続',{回数:window._fbListenRetry});
       try{if(fbUnsubscribe)fbUnsubscribe();}catch(e){}
       fbStartListener();
     },wait);
   });
 }
+// 受信エラーで再接続待ち(最大30秒)の間に、回線が戻った／画面が前面に戻った場合は
+// 待たずに即座に張り直す。iPadで画面ロックやWi-Fi切替のたびに「⚠同期エラー」が
+// 最大30秒残る原因への対策。待機中でない（正常に受信できている）ときは何もしない。
+function fbReconnectNow(reason){
+  if(!fbEnabled||!window._fbListenPending)return;
+  var now=Date.now();
+  if(window._fbReconnectNowAt&&now-window._fbReconnectNowAt<3000)return; // イベント連発の抑止
+  window._fbReconnectNowAt=now;
+  clearTimeout(window._fbListenTimer);
+  window._fbListenPending=false;
+  window._fbListenRetry=0;
+  syncLog('受信を即時再接続',{理由:reason});
+  try{if(fbUnsubscribe)fbUnsubscribe();}catch(e){}
+  fbStartListener();
+}
+window.addEventListener('online',function(){fbReconnectNow('online');});
+document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')fbReconnectNow('visible');});
+window.addEventListener('pageshow',function(e){if(e&&e.persisted)fbReconnectNow('pageshow');});
 
 // 【重要・2026-09再発対策】同時実行数(FB_IMG_CONCURRENCY)やバッチ件数(FB_INSP_RDOC_BATCH)を
 // 絞っていても、件数が多い端末では「少しずつ」取得し続けた結果が積み上がり、キャッシュ0件の
